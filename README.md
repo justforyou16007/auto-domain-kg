@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh.md)
+
 # Auto Domain KG
 
 A **GAN-style multi-agent framework** for user-concern-driven domain schema generation and knowledge graph construction.
@@ -289,7 +291,8 @@ auto-domain-kg/
 ├── .mcp.json               # Paseo MCP configuration
 ├── CLAUDE.md               # Worker config and user concerns
 ├── pyproject.toml          # Python project (uv-managed)
-├── README.md               # This file
+├── README.md               # English README
+├── README.zh.md            # Chinese README
 ├── src/
 │   └── auto_domain_kg/
 │       ├── __init__.py
