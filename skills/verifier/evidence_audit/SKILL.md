@@ -1,3 +1,8 @@
+---
+name: evidence-audit
+description: "Verifier skill. Audit entity and relationship evidence for multi-source consistency. Verify that evidence slices match source URLs and that facts are corroborated across sources."
+---
+
 # Evidence Audit — Verifier: Entity/Relation Evidence Audit
 
 ## Goal

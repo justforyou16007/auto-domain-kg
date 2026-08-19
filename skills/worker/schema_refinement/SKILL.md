@@ -1,3 +1,8 @@
+---
+name: schema-refinement
+description: "Refine and supplement the schema based on majority findings from entity collection. Update entity types, properties, and relationships discovered during research."
+---
+
 # Schema Refinement — Step 3b: Refine Schema Based on Collection Findings
 
 ## Goal

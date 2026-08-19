@@ -1,3 +1,8 @@
+---
+name: task-relevance-audit
+description: "Verifier skill. Evaluate whether the schema and graph instances remain relevant to the user's original concerns. Identify drift and suggest refocusing."
+---
+
 # Task Relevance Audit — Verifier: Task Relevance Audit
 
 ## Goal

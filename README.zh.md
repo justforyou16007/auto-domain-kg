@@ -136,7 +136,7 @@ verifier_provider: codex/gpt-4o
 - **风险关注**：需要监控哪些风险
 - **更新频率**：多久扫描一次新数据
 
-**技能文件**：`skills/worker/socratic_inquiry.md`
+**技能文件**：`skills/worker/socratic_inquiry/SKILL.md`
 
 ### 第二步：领域模式生成
 强智能体根据用户关注点创建领域模式：
@@ -145,7 +145,7 @@ verifier_provider: codex/gpt-4o
 - 继承层次结构
 - 模式保存至 `tmp/schema_definition.json`
 
-**技能文件**：`skills/worker/schema_creation.md`
+**技能文件**：`skills/worker/schema_creation/SKILL.md`
 
 ### 第三步：实体采集 + 三元组抽取
 弱智能体为各实体采集新闻/证据：
@@ -153,7 +153,7 @@ verifier_provider: codex/gpt-4o
 2. **模式修正**：根据实际发现修正模式
 3. **三元组抽取**：抽取（实体，关系，实体）三元组并附上证据
 
-**技能文件**：`skills/worker/entity_collection.md`、`skills/worker/schema_refinement.md`、`skills/worker/triple_extraction.md`
+**技能文件**：`skills/worker/entity_collection/SKILL.md`、`skills/worker/schema_refinement/SKILL.md`、`skills/worker/triple_extraction/SKILL.md`
 
 ### 第四步：图谱持久化
 将模式和实例持久化到 Neo4j：
@@ -162,7 +162,7 @@ verifier_provider: codex/gpt-4o
 - 创建关系
 - 通过 HAS_SCHEMA 关系将实体链接到模式
 
-**技能文件**：`skills/worker/graph_persistence.md`
+**技能文件**：`skills/worker/graph_persistence/SKILL.md`
 
 ### 第五步：Verifier 审计（自动驱动循环）
 Verifier（Codex）审计图谱并驱动修复：
@@ -174,7 +174,7 @@ Verifier（Codex）审计图谱并驱动修复：
 
 Worker 将自动修复发现的问题。循环持续进行，直至所有审计项目通过。
 
-**技能文件**：`skills/verifier/schema_audit.md`、`skills/verifier/graph_structure_audit.md`、`skills/verifier/graphrag_validation.md`、`skills/verifier/evidence_audit.md`、`skills/verifier/task_relevance_audit.md`
+**技能文件**：`skills/verifier/schema_audit/SKILL.md`、`skills/verifier/graph_structure_audit/SKILL.md`、`skills/verifier/graphrag_validation/SKILL.md`、`skills/verifier/evidence_audit/SKILL.md`、`skills/verifier/task_relevance_audit/SKILL.md`
 
 ### 第六步：完成
 - 构建结果摘要
@@ -183,7 +183,7 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 
 ## 每日更新流程
 
-1. 加载技能文件：`skills/updater/daily_update.md`
+1. 加载技能文件：`skills/updater/daily_update/SKILL.md`
 2. 扫描与实体相关的最新新闻（当日日期）
 3. 判断是否需要更新图谱（模式或实例层面）
 4. 将新闻发送给 Worker 智能体进行局部图谱更新
@@ -207,7 +207,7 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 4. 根据图谱结构确定风险等级
 5. 更新受影响实体的风险字段
 
-**技能文件**：`skills/risk/risk_assessment.md`
+**技能文件**：`skills/risk/risk_assessment/SKILL.md`
 
 ## Python 模块说明
 
@@ -303,10 +303,23 @@ auto-domain-kg/
 │       ├── graph_ops.py
 │       └── risk_assessment.py
 ├── skills/
-│   ├── worker/             # Worker 技能文件（6 个）
-│   ├── verifier/           # Verifier 技能文件（5 个）
+│   ├── worker/             # Worker 技能文件（6 个目录）
+│   │   ├── socratic_inquiry/SKILL.md
+│   │   ├── schema_creation/SKILL.md
+│   │   ├── entity_collection/SKILL.md
+│   │   ├── schema_refinement/SKILL.md
+│   │   ├── triple_extraction/SKILL.md
+│   │   └── graph_persistence/SKILL.md
+│   ├── verifier/           # Verifier 技能文件（5 个目录）
+│   │   ├── schema_audit/SKILL.md
+│   │   ├── graph_structure_audit/SKILL.md
+│   │   ├── graphrag_validation/SKILL.md
+│   │   ├── evidence_audit/SKILL.md
+│   │   └── task_relevance_audit/SKILL.md
 │   ├── updater/            # 更新器技能文件
+│   │   └── daily_update/SKILL.md
 │   └── risk/               # 风险评估技能文件
+│       └── risk_assessment/SKILL.md
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件

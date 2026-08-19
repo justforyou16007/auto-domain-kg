@@ -1,3 +1,8 @@
+---
+name: graph-structure-audit
+description: "Verifier skill. Audit the knowledge graph structure for connectivity, orphan nodes, relationship integrity, and graph health metrics."
+---
+
 # Graph Structure Audit — Verifier: Graph Structure Audit
 
 ## Goal

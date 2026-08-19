@@ -1,3 +1,8 @@
+---
+name: schema-audit
+description: "Verifier skill. Audit domain schema for completeness, consistency, proper inheritance, and no redundancy. Report issues with severity, category, and fix suggestions."
+---
+
 # Schema Audit — Verifier: Schema Structure Audit
 
 ## Goal

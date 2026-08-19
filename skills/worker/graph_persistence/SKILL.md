@@ -1,3 +1,8 @@
+---
+name: graph-persistence
+description: "Step 4 of KG construction. Persist schema, entities, and relationships to Neo4j. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability."
+---
+
 # Graph Persistence — Step 4: Persist Schema + Instances to Neo4j
 
 ## Goal

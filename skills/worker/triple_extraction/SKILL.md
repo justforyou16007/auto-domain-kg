@@ -1,3 +1,8 @@
+---
+name: triple-extraction
+description: "Extract entity-relation triples (subject, predicate, object) from collected news evidence. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
+---
+
 # Triple Extraction — Step 3c: Extract Entity-Relation-Entity Triples
 
 ## Goal

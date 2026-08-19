@@ -1,3 +1,8 @@
+---
+name: schema-creation
+description: "Step 2 of KG construction. Spawn a strong agent to generate domain schema definitions including entity types, properties, relationships, inheritance hierarchies, and inter-schema associations."
+---
+
 # Schema Creation — Step 2: Domain Schema Generation
 
 ## Goal

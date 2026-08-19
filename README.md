@@ -136,7 +136,7 @@ Extract user concerns through structured questioning. The agent asks about:
 - **Risk concerns**: What risks to monitor
 - **Update frequency**: How often to scan for new data
 
-**Skill**: `skills/worker/socratic_inquiry.md`
+**Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
 ### Step 2: Domain Schema Generation
 A strong agent creates the domain schema based on user concerns:
@@ -145,7 +145,7 @@ A strong agent creates the domain schema based on user concerns:
 - Inheritance hierarchies
 - Schema is saved to `tmp/schema_definition.json`
 
-**Skill**: `skills/worker/schema_creation.md`
+**Skill**: `skills/worker/schema_creation/SKILL.md`
 
 ### Step 3: Entity Collection + Triple Extraction
 Weak sub-agents collect news/evidence for entities:
@@ -153,7 +153,7 @@ Weak sub-agents collect news/evidence for entities:
 2. **Schema Refinement**: Refine schema based on actual findings
 3. **Triple Extraction**: Extract (entity, relation, entity) triples with evidence
 
-**Skills**: `skills/worker/entity_collection.md`, `skills/worker/schema_refinement.md`, `skills/worker/triple_extraction.md`
+**Skills**: `skills/worker/entity_collection/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`, `skills/worker/triple_extraction/SKILL.md`
 
 ### Step 4: Graph Persistence
 Persist schema and instances to Neo4j:
@@ -162,7 +162,7 @@ Persist schema and instances to Neo4j:
 - Create relationships
 - Link entities to schema via HAS_SCHEMA
 
-**Skill**: `skills/worker/graph_persistence.md`
+**Skill**: `skills/worker/graph_persistence/SKILL.md`
 
 ### Step 5: Verifier Audit (Auto-Driven Loop)
 The verifier (Codex) audits the graph and drives fixes:
@@ -174,7 +174,7 @@ The verifier (Codex) audits the graph and drives fixes:
 
 The worker automatically fixes issues. Loop continues until all audits pass.
 
-**Skills**: `skills/verifier/schema_audit.md`, `skills/verifier/graph_structure_audit.md`, `skills/verifier/graphrag_validation.md`, `skills/verifier/evidence_audit.md`, `skills/verifier/task_relevance_audit.md`
+**Skills**: `skills/verifier/schema_audit/SKILL.md`, `skills/verifier/graph_structure_audit/SKILL.md`, `skills/verifier/graphrag_validation/SKILL.md`, `skills/verifier/evidence_audit/SKILL.md`, `skills/verifier/task_relevance_audit/SKILL.md`
 
 ### Step 6: Completion
 - Summary of what was built
@@ -183,7 +183,7 @@ The worker automatically fixes issues. Loop continues until all audits pass.
 
 ## Daily Update Flow
 
-1. Load skill: `skills/updater/daily_update.md`
+1. Load skill: `skills/updater/daily_update/SKILL.md`
 2. Scan for entity-related news (today's date)
 3. Determine if graph update is needed (schema or instance)
 4. Send news to worker agent for partial graph update
@@ -207,7 +207,7 @@ If Entity A (a supplier) has a factory fire, the agent:
 4. Determines risk level based on graph structure
 5. Updates risk fields on affected entities
 
-**Skill**: `skills/risk/risk_assessment.md`
+**Skill**: `skills/risk/risk_assessment/SKILL.md`
 
 ## Python Modules
 
@@ -303,10 +303,23 @@ auto-domain-kg/
 │       ├── graph_ops.py
 │       └── risk_assessment.py
 ├── skills/
-│   ├── worker/             # Worker skills (6 files)
-│   ├── verifier/           # Verifier skills (5 files)
+│   ├── worker/             # Worker skills (6 directories)
+│   │   ├── socratic_inquiry/SKILL.md
+│   │   ├── schema_creation/SKILL.md
+│   │   ├── entity_collection/SKILL.md
+│   │   ├── schema_refinement/SKILL.md
+│   │   ├── triple_extraction/SKILL.md
+│   │   └── graph_persistence/SKILL.md
+│   ├── verifier/           # Verifier skills (5 directories)
+│   │   ├── schema_audit/SKILL.md
+│   │   ├── graph_structure_audit/SKILL.md
+│   │   ├── graphrag_validation/SKILL.md
+│   │   ├── evidence_audit/SKILL.md
+│   │   └── task_relevance_audit/SKILL.md
 │   ├── updater/            # Updater skills
+│   │   └── daily_update/SKILL.md
 │   └── risk/               # Risk skills
+│       └── risk_assessment/SKILL.md
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files

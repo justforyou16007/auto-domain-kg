@@ -22,33 +22,33 @@ verifier_provider: codex/gpt-4o
 ## 6-Step Construction Flow
 
 ### Step 1: Socratic Inquiry
-- Load skill: skills/worker/socratic_inquiry.md
+- Load skill: skills/worker/socratic_inquiry/SKILL.md
 - Ask the user structured questions to understand their domain, entities, relationships, risk concerns, and update frequency.
 - Save the results to the User Concerns section of this file.
 
 ### Step 2: Domain Schema Generation (Strong Agent)
-- Load skill: skills/worker/schema_creation.md
+- Load skill: skills/worker/schema_creation/SKILL.md
 - Spawn a strong agent (worker_provider) to create the domain schema.
 - Output: structured schema definitions (entity types, properties, relationships, inheritance).
 
 ### Step 3: Entity Collection (Weak Agents)
-- Load skill: skills/worker/entity_collection.md
+- Load skill: skills/worker/entity_collection/SKILL.md
 - Spawn multiple weak sub-agents (collector_provider) to search for news/articles about entities.
 - Use the news_adapter module to collect evidence.
 - Save evidence to data/evidence/ as JSONL files.
 
 ### Step 3b: Schema Refinement
-- Load skill: skills/worker/schema_refinement.md
+- Load skill: skills/worker/schema_refinement/SKILL.md
 - Based on majority findings from collection, refine and supplement the schema.
 - Update the schema definitions.
 
 ### Step 3c: Triple Extraction (Weak Agents)
-- Load skill: skills/worker/triple_extraction.md
+- Load skill: skills/worker/triple_extraction/SKILL.md
 - Spawn weak sub-agents to extract (entity, relation, entity) triples with evidence slices.
 - Save entities + relations to a markdown file + evidence to data/evidence/.
 
 ### Step 4: Graph Persistence
-- Load skill: skills/worker/graph_persistence.md
+- Load skill: skills/worker/graph_persistence/SKILL.md
 - Persist schema + instances to Neo4j.
 - Link entities to schema nodes.
 - Embed for vector search.
@@ -65,14 +65,14 @@ verifier_provider: codex/gpt-4o
 - Remind user of daily update and risk assessment features.
 
 ## Daily Update Flow
-1. Load skill: skills/updater/daily_update.md
+1. Load skill: skills/updater/daily_update/SKILL.md
 2. Scan for entity-related news (today's date).
 3. Determine if graph update is needed (schema or instance).
 4. Send news to worker agent for partial graph update.
 5. Run verifier to validate the update.
 
 ## Risk Warning Feature
-1. Load skill: skills/risk/risk_assessment.md
+1. Load skill: skills/risk/risk_assessment/SKILL.md
 2. Agent walks the graph to assess risk impact.
 3. Risk is user-concern-driven (NOT automatic propagation).
 4. Agent considers graph structure (alternative paths, redundancy).

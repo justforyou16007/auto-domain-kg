@@ -1,3 +1,8 @@
+---
+name: risk-assessment
+description: "Risk assessment skill. An agent walks the graph to assess risk impact on user concerns, considering alternative paths, redundancy, and centrality. Risk is user-concern-driven, not auto-propagated."
+---
+
 # Risk Assessment — Agent-Guided Risk Assessment and Graph Traversal
 
 ## Goal

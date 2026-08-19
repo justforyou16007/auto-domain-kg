@@ -1,3 +1,8 @@
+---
+name: graphrag-validation
+description: "Verifier skill. Validate graph quality by asking domain-driven GraphRAG questions using Neo4j vector search and Cypher multi-hop queries. Check if the graph can answer user concerns."
+---
+
 # GraphRAG Validation — Verifier: Domain Question GraphRAG Validation
 
 ## Goal

@@ -1,3 +1,8 @@
+---
+name: entity-collection
+description: "Step 3 of KG construction. Spawn multiple weak sub-agents to search for entity-related news and articles, collecting evidence with source URLs for triple extraction."
+---
+
 # Entity Collection — Step 3: News/Evidence Collection for Entities
 
 ## Goal

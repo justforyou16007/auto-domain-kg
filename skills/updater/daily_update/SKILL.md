@@ -1,3 +1,8 @@
+---
+name: daily-update
+description: "Daily update flow. Search for today's news about graph entities, determine if schema or instance updates are needed, and send relevant news to the worker agent for graph updates."
+---
+
 # Daily Update — Step: Daily News Scan and Graph Update
 
 ## Goal

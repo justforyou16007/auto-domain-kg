@@ -1,3 +1,8 @@
+---
+name: socratic-inquiry
+description: "Step 1 of KG construction. Ask structured Socratic questions to extract user concerns, domain scope, entity types, relationships, risk concerns, and update frequency. Save results to CLAUDE.md."
+---
+
 # Socratic Inquiry — Step 1: Extract User Concerns
 
 ## Goal
