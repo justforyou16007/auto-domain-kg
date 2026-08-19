@@ -138,22 +138,21 @@ Extract user concerns through structured questioning. The agent asks about:
 
 **Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
-### Step 2: Domain Schema Generation
-A strong agent creates the domain schema based on user concerns:
-- Entity types with properties
-- Relationship types with constraints
-- Inheritance hierarchies
-- Schema is saved to `tmp/schema_definition.json`
+### Step 2: Iterative Schema Generation & Entity Collection
+An iterative research-driven loop that combines schema generation, entity collection, and refinement:
+1. **Search**: Research a sub-topic or entity cluster within the domain (using web search)
+2. **Create Schema**: Based on search results, define partial entity types and relationship types. Merge into `tmp/schema_definition.json`.
+3. **Collect Evidence**: Spawn weak sub-agents to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/`.
+4. **Refine Schema**: Refine the partial schema based on the evidence just collected. Perform cross-iteration consistency checks.
+5. **Assess Coverage**: Evaluate whether the current iteration produced new types. If not, or if search results are outside the domain scope, terminate the loop.
+6. **Continue/Stop**: If new types were found, start the next iteration. Otherwise, proceed to Step 3.
 
-**Skill**: `skills/worker/schema_creation/SKILL.md`
+**Skills**: `skills/worker/schema_creation/SKILL.md`, `skills/worker/entity_collection/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`
 
-### Step 3: Entity Collection + Triple Extraction
-Weak sub-agents collect news/evidence for entities:
-1. **Entity Collection**: Search for news about each entity using `news_adapter`
-2. **Schema Refinement**: Refine schema based on actual findings
-3. **Triple Extraction**: Extract (entity, relation, entity) triples with evidence
+### Step 3: Triple Extraction
+Weak sub-agents extract (entity, relation, entity) triples with evidence from the collected evidence.
 
-**Skills**: `skills/worker/entity_collection/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`, `skills/worker/triple_extraction/SKILL.md`
+**Skill**: `skills/worker/triple_extraction/SKILL.md`
 
 ### Step 4: Graph Persistence
 Persist schema and instances to Neo4j:

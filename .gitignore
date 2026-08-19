@@ -5,8 +5,8 @@ __pycache__/
 .venv/
 .venv*/
 
-# uv
-uv.lock
+# uv (lockfile is committed for reproducible CI builds; see pyproject.toml for deps)
+# uv.lock
 
 # Data
 data/evidence/

@@ -41,15 +41,15 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "schema_creation": {
         "name": "schema-creation",
-        "description": "Step 2 of KG construction. Spawn a strong agent to generate domain schema definitions including entity types, properties, relationships, inheritance hierarchies, and inter-schema associations.",
+        "description": "Step 2 of KG construction (iterative). Research domain topics and generate schema definitions in iterations. Each iteration: search a sub-topic → create partial entity types and relationship types → merge results into tmp/schema_definition.json. Loop until no new schema types emerge or domain scope is exhausted.",
     },
     "entity_collection": {
         "name": "entity-collection",
-        "description": "Step 3 of KG construction. Spawn multiple weak sub-agents to search for entity-related news and articles, collecting evidence with source URLs for triple extraction.",
+        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence is collected incrementally per iteration, saved to data/evidence/.",
     },
     "schema_refinement": {
         "name": "schema-refinement",
-        "description": "Refine and supplement the schema based on majority findings from entity collection. Update entity types, properties, and relationships discovered during research.",
+        "description": "Part of iterative Step 2 of KG construction. After each iteration's entity collection, refine the partial schema based on collected evidence. Perform cross-iteration consistency checks: detect duplicate entity types, resolve relationship conflicts, ensure schema coherence.",
     },
     "triple_extraction": {
         "name": "triple-extraction",
