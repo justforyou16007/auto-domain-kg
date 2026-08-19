@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "paseo": {
+      "command": "/home/liu/.nvm/versions/node/v24.18.0/bin/paseo",
+      "args": ["daemon", "--mcp"],
+      "env": {
+        "PASEO_PROJECT_DIR": "{{cwd}}"
+      },
+      "tools": [
+        "spawn_agent",
+        "send_message",
+        "wait_for_agent",
+        "list_agents",
+        "terminate_agent"
+      ]
+    }
+  }
+}
