@@ -26,23 +26,21 @@ verifier_provider: codex/gpt-4o
 - Ask the user structured questions to understand their domain, entities, relationships, risk concerns, and update frequency.
 - Save the results to the User Concerns section of this file.
 
-### Step 2: Domain Schema Generation (Strong Agent)
-- Load skill: skills/worker/schema_creation/SKILL.md
-- Spawn a strong agent (worker_provider) to create the domain schema.
-- Output: structured schema definitions (entity types, properties, relationships, inheritance).
+### Step 2: Iterative Schema Generation & Entity Collection (Iterative Loop)
+- Load skills: skills/worker/schema_creation/SKILL.md, skills/worker/entity_collection/SKILL.md, skills/worker/schema_refinement/SKILL.md
+- Run an iterative loop that combines schema generation, entity collection, and refinement:
+  1. **Search**: Research a sub-topic or entity cluster within the domain (using web search).
+  2. **Create Schema**: Based on search results, define partial entity types and relationship types. Merge into `tmp/schema_definition.json`.
+  3. **Collect Evidence**: Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files.
+  4. **Refine Schema**: Refine the partial schema based on the evidence just collected. Perform cross-iteration consistency checks (deduplication, conflict resolution).
+  5. **Assess Coverage**: Evaluate whether the current iteration produced new entity types or relationship types. If not, or if search results are outside the domain scope, terminate the loop.
+  6. **Continue/Stop**: If new types were found, start the next iteration (go to step 1). Otherwise, proceed to Step 3.
+- Skills used in the loop:
+  - `schema_creation/SKILL.md` — iterative research-driven schema generation
+  - `entity_collection/SKILL.md` — per-iteration evidence collection
+  - `schema_refinement/SKILL.md` — per-iteration refinement and cross-iteration consistency
 
-### Step 3: Entity Collection (Weak Agents)
-- Load skill: skills/worker/entity_collection/SKILL.md
-- Spawn multiple weak sub-agents (collector_provider) to search for news/articles about entities.
-- Use the news_adapter module to collect evidence.
-- Save evidence to data/evidence/ as JSONL files.
-
-### Step 3b: Schema Refinement
-- Load skill: skills/worker/schema_refinement/SKILL.md
-- Based on majority findings from collection, refine and supplement the schema.
-- Update the schema definitions.
-
-### Step 3c: Triple Extraction (Weak Agents)
+### Step 3: Triple Extraction (Weak Agents)
 - Load skill: skills/worker/triple_extraction/SKILL.md
 - Spawn weak sub-agents to extract (entity, relation, entity) triples with evidence slices.
 - Save entities + relations to a markdown file + evidence to data/evidence/.

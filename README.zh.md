@@ -138,22 +138,21 @@ verifier_provider: codex/gpt-4o
 
 **技能文件**：`skills/worker/socratic_inquiry/SKILL.md`
 
-### 第二步：领域模式生成
-强智能体根据用户关注点创建领域模式：
-- 实体类型及其属性
-- 关系类型及其约束
-- 继承层次结构
-- 模式保存至 `tmp/schema_definition.json`
+### 第二步：迭代式模式生成与实体采集
+迭代式研究驱动循环，将模式生成、实体采集和修正整合在一起：
+1. **搜索**：研究领域内的子主题或实体簇（使用网络搜索）
+2. **创建模式**：基于搜索结果定义部分实体类型和关系类型，合并到 `tmp/schema_definition.json`
+3. **采集证据**：派遣弱智能体搜索本次迭代中实体的新闻/文章，保存证据到 `data/evidence/`
+4. **修正模式**：基于刚采集的证据修正部分模式，执行跨迭代的一致性检查
+5. **评估覆盖度**：判断当前迭代是否产生了新类型，如果没有，或搜索结果超出领域范围，则终止循环
+6. **继续/停止**：如果发现了新类型，开始下一次迭代；否则进入第三步
 
-**技能文件**：`skills/worker/schema_creation/SKILL.md`
+**技能文件**：`skills/worker/schema_creation/SKILL.md`、`skills/worker/entity_collection/SKILL.md`、`skills/worker/schema_refinement/SKILL.md`
 
-### 第三步：实体采集 + 三元组抽取
-弱智能体为各实体采集新闻/证据：
-1. **实体采集**：使用 `news_adapter` 搜索每个实体的相关新闻
-2. **模式修正**：根据实际发现修正模式
-3. **三元组抽取**：抽取（实体，关系，实体）三元组并附上证据
+### 第三步：三元组抽取
+弱智能体从采集的证据中抽取（实体，关系，实体）三元组并附上证据。
 
-**技能文件**：`skills/worker/entity_collection/SKILL.md`、`skills/worker/schema_refinement/SKILL.md`、`skills/worker/triple_extraction/SKILL.md`
+**技能文件**：`skills/worker/triple_extraction/SKILL.md`
 
 ### 第四步：图谱持久化
 将模式和实例持久化到 Neo4j：
