@@ -1,69 +1,111 @@
 ---
 name: risk-assessment
-description: "Risk assessment skill. An agent walks the graph to assess risk impact on user concerns, considering alternative paths, redundancy, and centrality. Risk is user-concern-driven, not auto-propagated."
+description: "6-step news-to-graph impact analysis pipeline. 1) Receive Daily News 2) Extract News Events 3) Associate Evidence Fragments 4) GraphRAG Event-to-Node Analysis 5) DAG Impact Tracing 6) Generate Impact Report using external template. Risk is user-concern-driven, not auto-propagated."
 ---
 
-# Risk Assessment — Agent-Guided Risk Assessment and Graph Traversal
+# Risk Assessment — 6-Step News-to-Graph Impact Analysis Pipeline
 
 ## Goal
-Assess risk impact using user-concern-driven analysis. An agent walks the graph to evaluate if a risk event on one entity affects the user's concern topic, considering graph structure (e.g., alternative paths, redundancy).
+Transform daily news into structured risk reports by analyzing how news events
+impact knowledge graph nodes. The analysis follows a 6-step pipeline:
+1. Receive Daily News
+2. Extract News Events
+3. Associate Evidence Fragments
+4. GraphRAG Event-to-Node Analysis
+5. DAG Impact Tracing
+6. Generate Impact Report using external template
 
-## Process
+## 6-Step Process
 
-### 1. Trigger
-Risk assessment is triggered by:
-- A new risk event detected during daily update.
-- User explicitly requesting a risk assessment.
-- Verifier identifying a risk-related issue.
+### Step 1: Receive Daily News
+- Receive today's news list from the `daily_update` skill.
+- **Input**: News items, each containing:
+  - `title`: News headline
+  - `url`: Source URL
+  - `content`: Full article text
+  - `published_date`: Publication date
+  - `source`: Source name
 
-### 2. Load Context
-- Load the user concerns from CLAUDE.md (risk concerns section).
-- Identify the entity with the potential risk event.
-- Load the subgraph around the entity using `RiskAssessment.get_risk_subgraph(entity_id, hops=3)`.
+### Step 2: Extract News Events
+- Extract structured events from each news item.
+- Each event contains:
+  - `event_type`: Type of event (e.g., factory_fire, supply_disruption, regulatory_change, acquisition, leadership_change, financial_distress)
+  - `description`: Natural language description of the event
+  - `entities_mentioned`: List of entities mentioned in the event
+  - `severity_hint`: Preliminary severity indicator
+  - `source_news_id`: Reference to the source news item
+- A single news article may contain multiple events.
+- Use `RiskAssessment.extract_events_from_news()` to initialize event structures.
 
-### 3. Agent Assessment (Agent-Driven)
-The agent walks the graph and considers:
+### Step 3: Associate Evidence Fragments
+- For each event, locate and extract supporting text snippets from the source news.
+- Save evidence fragments to `data/evidence/` using the `EvidenceStore` module.
+- Each evidence record contains:
+  - `text_slice`: The supporting text excerpt
+  - `source_url`: URL of the source article
+  - `source_title`: Title of the source article
+  - `position_in_article`: Approximate position of the snippet
+- Use `RiskAssessment.associate_evidence()` to extract and save evidence.
 
-#### Graph Structure Analysis
-- **Alternative paths**: If entity A fails, are there alternative entities providing the same function?
-  - Example: 4 suppliers, 1 failing = NOT strong risk if 3 alternatives exist.
-  - Example: 1 supplier, 1 failing = STRONG risk.
-- **Redundancy**: Are there redundant relationships or entities?
-- **Centrality**: Is the entity a central hub? If it fails, how many entities are affected?
-- **Distance**: How many hops away is the risk from the user's concern entity?
+### Step 4: GraphRAG Event-to-Node Analysis
+- For each event, perform GraphRAG retrieval:
+  1. **Vector Search**: Use the event description to perform vector similarity search
+     against Neo4j entity embeddings, via `GraphOps.vector_search()`.
+  2. **Multi-hop Subgraph**: For each matched node, explore its neighborhood
+     using `GraphOps.multi_hop_subgraph()` (2 hops by default).
+  3. **Semantic Relevance Analysis**: Agent analyzes the substantive relevance
+     between the event and retrieved graph nodes (not simple keyword matching).
+- Output: List of affected graph nodes per event, including:
+  - The node's properties
+  - Similarity score
+  - Subgraph context
+  - Impact mechanism description
+- Use `RiskAssessment.graphrag_event_search()`.
 
-#### User Concern Relevance
-- Does the risk event affect the user's specific concern topic?
-- Is the risk direct (same entity) or indirect (traversing through the graph)?
-- What is the propagation path from the risk entity to the concern entity?
+### Step 5: DAG Impact Tracing
+- For each affected node identified in Step 4, trace impact propagation
+  along the DAG (directed acyclic graph) direction:
+  - Follow outgoing relationships using Cypher queries
+  - Query: `MATCH path = (start)-[*1..N]->(downstream) WHERE elementId(start) = $id RETURN path`
+  - Analyze each downstream node for substantive impact (considering redundancy,
+    alternative paths, and graph structure)
+- Output: Affected subgraph with:
+  - Original event-triggered nodes
+  - Propagation paths
+  - Downstream impacted nodes
+- Use `RiskAssessment.trace_dag_impact()`.
 
-### 4. Risk Level Determination
-Based on the assessment, determine the risk level:
-- **NONE**: No impact on user concerns.
-- **LOW**: Minimal impact, alternatives exist, distant from concerns.
-- **MEDIUM**: Moderate impact, some alternatives exist, moderate distance.
-- **HIGH**: Significant impact, few alternatives, close to concerns.
-- **CRITICAL**: Direct impact on user concerns, no alternatives, immediate attention needed.
+### Step 6: Generate Impact Report
+- Load the report template from `templates/{domain}_domain_report_template.md`
+  (default: `templates/default_domain_report_template.md`).
+- Fill template placeholders with analysis results:
+  - `{{date}}` — Report date
+  - `{{domain}}` — Domain name
+  - `{{events_summary}}` — News events summary table
+  - `{{affected_nodes}}` — Affected graph nodes list
+  - `{{impact_paths}}` — Impact propagation paths
+  - `{{risk_assessment}}` — Overall risk level assessment
+  - `{{evidence}}` — Evidence traceability
+  - `{{mitigation_suggestions}}` — Suggested mitigation actions
+- Output report to `reports/` directory with naming format:
+  `{date}_{domain}_risk_report.md`
+- Use `RiskAssessment.generate_report()`.
 
-### 5. Update Risk Fields
-Use `RiskAssessment.add_risk_field()` to update the risk level on the entity:
+### Orchestration
+The full pipeline is orchestrated by `RiskAssessment.run_full_analysis()`:
 ```python
-await risk_assessment.add_risk_field(
-    entity_id=entity_id,
-    risk_level=RiskLevel.HIGH,
-    reason="Entity is the sole supplier of critical component X. Risk event: factory fire.",
-    evidence_urls=["https://example.com/news/factory-fire"],
+report_path = await risk_assessment.run_full_analysis(
+    news_items=news_list,
+    domain="supply_chain",
+    template_path="templates/default_domain_report_template.md",
 )
 ```
 
-### 6. Report
-- Summarize the risk assessment with graph traversal path.
-- Explain the reasoning (what graph structure was considered).
-- List affected entities and their risk levels.
-- Suggest mitigation actions if applicable.
-
-### Key Principles
+## Key Principles
 - **User-concern-driven**: Risk is only relevant if it affects the user's concerns.
-- **NOT automatic propagation**: An agent must walk the graph and reason about each path.
-- **Graph structure matters**: Consider alternatives, redundancy, and centrality.
-- **Evidence-backed**: Each risk assessment must cite evidence sources.
+- **NOT automatic propagation**: Each step requires substantive analysis.
+- **Semantic relevance**: Step 4 uses semantic (not just keyword) matching.
+- **Graph structure matters**: Consider alternatives, redundancy, centrality.
+- **Evidence-backed**: Each assessment must cite evidence sources.
+- **Template-driven reports**: Report templates are externalized to `templates/` directory.
+- **DAG-aware tracing**: Step 5 respects graph directionality and structure.

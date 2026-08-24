@@ -1,12 +1,12 @@
 ---
 name: daily-update
-description: "Daily update flow. Search for today's news about graph entities, determine if schema or instance updates are needed, and send relevant news to the worker agent for graph updates."
+description: "Daily update flow. Search for today's news about graph entities, determine if schema or instance updates are needed, and send relevant news to the worker agent for graph updates. When risk events are detected, trigger the full 6-step risk analysis pipeline (risk_assessment skill)."
 ---
 
 # Daily Update — Step: Daily News Scan and Graph Update
 
 ## Goal
-Scan for entity-related news published today, determine if a graph update is needed (schema or instance), and trigger a partial graph update.
+Scan for entity-related news published today, determine if a graph update is needed (schema or instance), and trigger a partial graph update. When risk events are detected, trigger the full 6-step risk analysis pipeline.
 
 ## Process
 
@@ -26,13 +26,18 @@ For each entity with new news:
 - **Schema change needed?** Does the news mention new entity types or relationships not in the schema?
 - **Instance change needed?** Does the news contain new facts about existing entities?
 - **New entities?** Does the news mention entities not in the graph?
-- **Risk update?** Does the news indicate a risk event?
+- **Risk event?** Does the news indicate a risk event (e.g., factory fire, supply disruption, regulatory change, acquisition, leadership change, financial distress)?
 
 ### 4. Send Update Request to Worker
 Based on the assessment:
 - **Schema update required**: Send schema + news to worker agent for schema refinement.
 - **Instance update required**: Send entity + news to worker agent for triple extraction and persistence.
-- **Risk reassessment required**: Mark entity for risk reassessment using `RiskAssessment.update_risk_after_news_scan()`.
+- **Risk event detected**: When a risk event is identified, send the complete news item to the `risk_assessment` skill for full 6-step analysis:
+  1. The `risk_assessment` skill receives the news list
+  2. Executes the 6-step pipeline: event extraction → evidence association → GraphRAG node search → DAG impact tracing → report generation
+  3. Produces a risk report in `reports/` directory
+  4. The risk report is reviewed by the worker for any necessary graph updates
+  - Do NOT simply call `update_risk_after_news_scan()`; instead trigger the complete 6-step pipeline via `RiskAssessment.run_full_analysis()`.
 
 ### 5. Run Verifier
 After the update is applied, run the verifier to validate:
@@ -47,7 +52,7 @@ Summarize what was updated:
 - Schema changes made
 - New entities added
 - New relationships added
-- Risk reassessments triggered
+- Risk events detected and reports generated
 
 ### Configuration
 - Update frequency is set in the user concerns (daily/weekly/monthly).

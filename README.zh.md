@@ -186,27 +186,41 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 2. 扫描与实体相关的最新新闻（当日日期）
 3. 判断是否需要更新图谱（模式或实例层面）
 4. 将新闻发送给 Worker 智能体进行局部图谱更新
-5. 运行 Verifier 验证更新结果
+5. 当检测到风险事件时，通过 `RiskAssessment.run_full_analysis()` 触发完整的 6 步风险分析流程
+6. 运行 Verifier 验证更新结果
 
-## 风险评估功能
+## 风险评估功能 — 6 步新闻→图谱影响分析
 
-风险是**用户关注驱动**的（而非自动传播）。智能体遍历图谱，评估某个实体上的风险事件是否会影响用户关注的主题。
+风险是**用户关注驱动**的（而非自动传播）。风险评估技能采用完整的 6 步流程，将每日新闻转化为带有图谱影响分析的结构化风险报告。
+
+### 6 步流程
+
+1. **接收每日新闻** — 从 `daily_update` 技能接收新闻列表
+2. **提取新闻事件** — 提取结构化事件（事件类型、描述、提及实体、严重程度提示）
+3. **关联证据片段** — 从新闻中提取支持性文本片段，保存到 `data/evidence/`
+4. **GraphRAG 事件到节点分析** — 向量检索 + 多跳子图探索，查找受影响的图谱节点
+5. **DAG 影响追溯** — 通过 Cypher 查询沿有向关系追溯下游影响
+6. **生成影响报告** — 使用外部模板（`templates/{domain}_domain_report_template.md`）生成报告到 `reports/`
 
 ### 核心原则
 - **图谱结构至关重要**：考虑替代路径、冗余性、中心度
-- **智能体引导**：智能体遍历图谱并对每条路径进行推理
+- **语义相关性**：第 4 步使用语义匹配（而非关键词匹配）
+- **DAG 感知追溯**：第 5 步尊重图的方向性
+- **模板驱动**：报告模板外置到 `templates/` 目录
 - **证据支撑**：每项风险评估均引用证据来源
 - **风险等级**：NONE（无风险）、LOW（低）、MEDIUM（中）、HIGH（高）、CRITICAL（严重）
 
 ### 示例
-假设实体 A（某供应商）发生工厂火灾，智能体将：
-1. 加载实体 A 周围的子图
-2. 检查是否存在替代供应商（冗余性）
-3. 遍历至用户关注的实体
-4. 根据图谱结构确定风险等级
-5. 更新受影响实体的风险字段
+假设实体 A（某供应商）发生工厂火灾，流程将：
+1. 接收关于工厂火灾的新闻文章
+2. 提取事件：`{event_type: "factory_fire", description: "...", severity_hint: "high"}`
+3. 从文章中提取证据片段
+4. 向量检索找到相关图谱节点（供应商 A、产品、客户）
+5. DAG 追溯发现下游影响（生产延迟、运输中断）
+6. 生成结构化风险报告 `reports/{date}_supply_chain_risk_report.md`
 
 **技能文件**：`skills/risk/risk_assessment/SKILL.md`
+**Python 模块**：`src/auto_domain_kg/risk_assessment.py`
 
 ## Python 模块说明
 
@@ -226,7 +240,7 @@ Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多�
 高层图谱操作，整合 Neo4j、Embedding 和证据存储。提供 `create_entity_node()` 等复合操作（自动生成嵌入并链接到模式）。
 
 ### `risk_assessment.py`
-风险字段管理与智能体引导的图谱遍历风险评估。风险等级：NONE、LOW、MEDIUM、HIGH、CRITICAL。
+风险字段管理、6步新闻→图谱影响分析流程及智能体引导的图谱遍历。方法包括：`extract_events_from_news()`、`associate_evidence()`、`graphrag_event_search()`、`trace_dag_impact()`、`generate_report()`、`run_full_analysis()`。风险等级：NONE、LOW、MEDIUM、HIGH、CRITICAL。
 
 ## 扩展新的新闻适配器
 
@@ -319,6 +333,9 @@ auto-domain-kg/
 │   │   └── daily_update/SKILL.md
 │   └── risk/               # 风险评估技能文件
 │       └── risk_assessment/SKILL.md
+├── templates/              # 报告模板
+│   └── default_domain_report_template.md
+├── reports/                # 生成的风险报告
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件
