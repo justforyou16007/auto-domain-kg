@@ -67,12 +67,17 @@ verifier_provider: codex/gpt-4o
 2. Scan for entity-related news (today's date).
 3. Determine if graph update is needed (schema or instance).
 4. Send news to worker agent for partial graph update.
-5. Run verifier to validate the update.
+5. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`.
+6. Run verifier to validate the update.
 
-## Risk Warning Feature
+## Risk Assessment Feature — 6-Step News-to-Graph Impact Analysis
 1. Load skill: skills/risk/risk_assessment/SKILL.md
-2. Agent walks the graph to assess risk impact.
-3. Risk is user-concern-driven (NOT automatic propagation).
-4. Agent considers graph structure (alternative paths, redundancy).
-5. Updates risk fields on entity nodes.
-6. Use risk_assessment module for graph traversal.
+2. **Step 1**: Receive daily news from the daily_update skill.
+3. **Step 2**: Extract structured events from news (event extraction).
+4. **Step 3**: Associate evidence fragments from news to events.
+5. **Step 4**: GraphRAG event-to-node analysis — vector search + multi-hop subgraph exploration.
+6. **Step 5**: DAG impact tracing — follow outgoing relationships via Cypher to find downstream impacts.
+7. **Step 6**: Generate impact report from external template (`templates/default_domain_report_template.md`).
+8. Risk is user-concern-driven (NOT automatic propagation).
+9. Use risk_assessment module for graph traversal and `run_full_analysis()` for the full pipeline.
+10. Report templates are in `templates/` directory; generated reports go to `reports/`.

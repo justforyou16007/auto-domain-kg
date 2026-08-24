@@ -121,6 +121,8 @@ mkdir -p "$PROJECT_DIR/skills/risk"
 mkdir -p "$PROJECT_DIR/skills/risk/risk_assessment"
 mkdir -p "$PROJECT_DIR/data/evidence"
 mkdir -p "$PROJECT_DIR/tmp"
+mkdir -p "$PROJECT_DIR/templates"
+mkdir -p "$PROJECT_DIR/reports"
 mkdir -p "$PROJECT_DIR/tests"
 log_ok "Directory structure created."
 

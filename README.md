@@ -186,27 +186,43 @@ The worker automatically fixes issues. Loop continues until all audits pass.
 2. Scan for entity-related news (today's date)
 3. Determine if graph update is needed (schema or instance)
 4. Send news to worker agent for partial graph update
-5. Run verifier to validate the update
+5. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`
+6. Run verifier to validate the update
 
-## Risk Assessment Feature
+## Risk Assessment Feature — 6-Step News-to-Graph Impact Analysis
 
-Risk is **user-concern-driven** (NOT automatic propagation). An agent walks the graph to assess if a risk event on one entity affects the user's concern topic.
+Risk is **user-concern-driven** (NOT automatic propagation). The risk assessment
+skill follows a complete 6-step pipeline to transform daily news into structured
+risk reports with graph impact analysis.
+
+### 6-Step Pipeline
+
+1. **Receive Daily News** — Receive news list from the `daily_update` skill
+2. **Extract News Events** — Extract structured events (event_type, description, entities_mentioned, severity_hint)
+3. **Associate Evidence Fragments** — Extract supporting text snippets from news, save to `data/evidence/`
+4. **GraphRAG Event-to-Node Analysis** — Vector search + multi-hop subgraph exploration to find affected graph nodes
+5. **DAG Impact Tracing** — Follow outgoing relationships via Cypher queries to trace downstream impacts
+6. **Generate Impact Report** — Use external template (`templates/{domain}_domain_report_template.md`) to produce report in `reports/`
 
 ### Key Principles
 - **Graph structure matters**: Consider alternatives, redundancy, centrality
-- **Agent-guided**: The agent walks the graph and reasons about each path
+- **Semantic relevance**: Step 4 uses semantic (not just keyword) matching
+- **DAG-aware tracing**: Step 5 respects graph directionality
+- **Template-driven**: Report templates are externalized to `templates/` directory
 - **Evidence-backed**: Each risk assessment cites evidence sources
 - **Risk levels**: NONE, LOW, MEDIUM, HIGH, CRITICAL
 
 ### Example
-If Entity A (a supplier) has a factory fire, the agent:
-1. Loads the subgraph around Entity A
-2. Checks if there are alternative suppliers (redundancy)
-3. Traverses to the user's concern entity
-4. Determines risk level based on graph structure
-5. Updates risk fields on affected entities
+If Entity A (a supplier) has a factory fire, the pipeline:
+1. Receives the news article about the factory fire
+2. Extracts event: `{event_type: "factory_fire", description: "...", severity_hint: "high"}`
+3. Extracts evidence snippets from the article
+4. Vector search finds related graph nodes (Supplier A, its products, its customers)
+5. DAG tracing finds downstream impacts (production delays, shipping disruptions)
+6. Generates a structured risk report in `reports/{date}_supply_chain_risk_report.md`
 
 **Skill**: `skills/risk/risk_assessment/SKILL.md`
+**Python module**: `src/auto_domain_kg/risk_assessment.py`
 
 ## Python Modules
 
@@ -226,7 +242,7 @@ Abstract `NewsAdapter` interface and `GoogleSearchNewsAdapter` implementation. E
 High-level graph operations combining Neo4j, embedding, and evidence store. Provides composite operations like `create_entity_node()` (auto-embeds and links to schema).
 
 ### `risk_assessment.py`
-Risk field management and agent-guided graph traversal for risk assessment. Risk levels: NONE, LOW, MEDIUM, HIGH, CRITICAL.
+Risk field management, 6-step news-to-graph impact analysis pipeline, and agent-guided graph traversal. Methods: `extract_events_from_news()`, `associate_evidence()`, `graphrag_event_search()`, `trace_dag_impact()`, `generate_report()`, `run_full_analysis()`. Risk levels: NONE, LOW, MEDIUM, HIGH, CRITICAL.
 
 ## Extending with New News Adapters
 
@@ -319,6 +335,9 @@ auto-domain-kg/
 │   │   └── daily_update/SKILL.md
 │   └── risk/               # Risk skills
 │       └── risk_assessment/SKILL.md
+├── templates/              # Report templates
+│   └── default_domain_report_template.md
+├── reports/                # Generated risk reports
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files

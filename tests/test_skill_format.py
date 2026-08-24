@@ -81,11 +81,11 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "daily_update": {
         "name": "daily-update",
-        "description": "Daily update flow. Search for today's news about graph entities, determine if schema or instance updates are needed, and send relevant news to the worker agent for graph updates.",
+        "description": "Daily update flow. Search for today's news about graph entities, determine if schema or instance updates are needed, and send relevant news to the worker agent for graph updates. When risk events are detected, trigger the full 6-step risk analysis pipeline (risk_assessment skill).",
     },
     "risk_assessment": {
         "name": "risk-assessment",
-        "description": "Risk assessment skill. An agent walks the graph to assess risk impact on user concerns, considering alternative paths, redundancy, and centrality. Risk is user-concern-driven, not auto-propagated.",
+        "description": "6-step news-to-graph impact analysis pipeline. 1) Receive Daily News 2) Extract News Events 3) Associate Evidence Fragments 4) GraphRAG Event-to-Node Analysis 5) DAG Impact Tracing 6) Generate Impact Report using external template. Risk is user-concern-driven, not auto-propagated.",
     },
 }
 
