@@ -172,6 +172,197 @@ def test_evidence_record_provenance():
     assert "T" in record.retrieved_at  # ISO format timestamp
 
 
+def test_get_source_urls(store):
+    """Test getting unique source URLs for an entity."""
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 1",
+            source_url="https://example.com/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 2",
+            source_url="https://example.com/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 3",
+            source_url="https://example.com/2",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    urls = store.get_source_urls("entity-1")
+    assert len(urls) == 2
+    assert "https://example.com/1" in urls
+    assert "https://example.com/2" in urls
+
+
+def test_get_source_urls_relation(store):
+    """Test getting unique source URLs for a relation."""
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            relation_id="rel-1",
+            text_slice="Relates to B.",
+            source_url="https://example.com/rel1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            relation_id="rel-1",
+            text_slice="Also relates to B.",
+            source_url="https://example.com/rel2",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    urls = store.get_source_urls("entity-1", relation_id="rel-1")
+    assert len(urls) == 2
+    assert "https://example.com/rel1" in urls
+    assert "https://example.com/rel2" in urls
+
+
+def test_get_source_urls_empty(store):
+    """Test getting source URLs for nonexistent entity."""
+    urls = store.get_source_urls("nonexistent")
+    assert urls == []
+
+
+def test_get_source_count(store):
+    """Test counting independent sources."""
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 1",
+            source_url="https://example.com/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 2",
+            source_url="https://example.com/2",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 3",
+            source_url="https://example.com/2",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    assert store.get_source_count("entity-1") == 2
+
+
+def test_get_source_count_empty(store):
+    """Test source count for nonexistent entity."""
+    assert store.get_source_count("nonexistent") == 0
+
+
+def test_cross_validate_consensus(store):
+    """Test cross-validation with multiple agreeing sources."""
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Test Corp is a leading supplier of electronic components.",
+            source_url="https://example.com/news/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Test Corp supplies electronic components to major manufacturers.",
+            source_url="https://example.com/news/2",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    result = store.cross_validate("entity-1")
+    assert result["source_count"] == 2
+    assert result["has_consensus"] is True
+    assert result["conflicting"] is False
+    assert len(result["sources"]) == 2
+
+
+def test_cross_validate_single_source(store):
+    """Test cross-validation with only one source."""
+    record = EvidenceRecord(
+        entity_id="entity-1",
+        text_slice="Test Corp is a leading supplier.",
+        source_url="https://example.com/news/1",
+    )
+    store.save_evidence(record)
+    result = store.cross_validate("entity-1")
+    assert result["source_count"] == 1
+    assert result["has_consensus"] is False
+    assert "Single source" in result["details"]
+
+
+def test_cross_validate_no_evidence(store):
+    """Test cross-validation with no evidence."""
+    result = store.cross_validate("nonexistent")
+    assert result["source_count"] == 0
+    assert result["has_consensus"] is False
+    assert "No evidence" in result["details"]
+
+
+def test_cross_validate_conflict(store):
+    """Test cross-validation detects conflicting sources.
+
+    When two independent sources make contradictory statements about the same
+    key fact (one affirmative, one negated), the cross-validation result must
+    flag the conflict: ``conflicting`` is True and ``has_consensus`` is False.
+    """
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Test Corp is the leading supplier of electronic components.",
+            source_url="https://example.com/news/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Test Corp is not the leading supplier of electronic components.",
+            source_url="https://example.com/news/2",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    result = store.cross_validate("entity-1")
+    assert result["source_count"] == 2
+    assert result["conflicting"] is True
+    assert result["has_consensus"] is False
+    assert len(result["sources"]) == 2
+
+
+def test_is_well_supported(store):
+    """Test that entity with 2+ sources is well supported."""
+    records = [
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 1",
+            source_url="https://example.com/1",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 2",
+            source_url="https://example.com/2",
+        ),
+        EvidenceRecord(
+            entity_id="entity-1",
+            text_slice="Fact 3",
+            source_url="https://example.com/3",
+        ),
+    ]
+    store.save_evidence_batch(records)
+    assert store.is_well_supported("entity-1") is True
+    assert store.is_well_supported("entity-1", min_sources=3) is True
+    assert store.is_well_supported("entity-1", min_sources=5) is False
+
+
+def test_is_well_supported_single_source(store):
+    """Test that single-source entity is not well supported."""
+    record = EvidenceRecord(
+        entity_id="entity-1",
+        text_slice="Fact 1",
+        source_url="https://example.com/1",
+    )
+    store.save_evidence(record)
+    assert store.is_well_supported("entity-1") is False
+    assert store.is_well_supported("entity-1", min_sources=1) is True
+
+
 def test_jsonl_format(store):
     """Test that evidence is stored in JSONL format."""
     record = EvidenceRecord(

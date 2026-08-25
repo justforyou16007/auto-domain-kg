@@ -226,6 +226,128 @@ class Neo4jClient:
         results = await self._run_query(query)
         return [r["s"] for r in results]
 
+    # ---- Schema Hierarchy Operations ----
+
+    async def create_schema_hierarchy(
+        self, child_schema_id: str, parent_schema_id: str
+    ) -> str:
+        """Create a SUBCLASS_OF relationship between two Schema nodes.
+
+        Args:
+            child_schema_id: Element ID of the child Schema node.
+            parent_schema_id: Element ID of the parent Schema node.
+
+        Returns:
+            The element ID of the created relationship.
+        """
+        query = (
+            "MATCH (child:Schema) WHERE elementId(child) = $child_id "
+            "MATCH (parent:Schema) WHERE elementId(parent) = $parent_id "
+            "CREATE (child)-[r:SUBCLASS_OF]->(parent) "
+            "RETURN elementId(r) AS id"
+        )
+        results = await self._run_query(
+            query,
+            {"child_id": child_schema_id, "parent_id": parent_schema_id},
+        )
+        return results[0]["id"] if results else ""
+
+    async def get_schema_ancestors(
+        self, schema_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all ancestor Schema nodes along SUBCLASS_OF relationships.
+
+        Traverses upward from the given Schema node following SUBCLASS_OF
+        relationships to find all parent, grandparent, etc. nodes.
+
+        Args:
+            schema_id: Element ID of the Schema node.
+
+        Returns:
+            List of ancestor Schema node properties, ordered from
+            nearest ancestor to farthest.
+        """
+        query = (
+            "MATCH (s:Schema) WHERE elementId(s) = $id "
+            "MATCH (s)-[:SUBCLASS_OF*1..]->(ancestor:Schema) "
+            "RETURN DISTINCT ancestor "
+            "ORDER BY ancestor.name"
+        )
+        results = await self._run_query(query, {"id": schema_id})
+        return [r["ancestor"] for r in results]
+
+    async def get_schema_descendants(
+        self, schema_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all descendant Schema nodes along SUBCLASS_OF relationships.
+
+        Traverses downward from the given Schema node following
+        SUBCLASS_OF relationships to find all children, grandchildren, etc.
+
+        Args:
+            schema_id: Element ID of the Schema node.
+
+        Returns:
+            List of descendant Schema node properties, ordered by name.
+        """
+        query = (
+            "MATCH (s:Schema) WHERE elementId(s) = $id "
+            "MATCH (s)<-[:SUBCLASS_OF*1..]-(descendant:Schema) "
+            "RETURN DISTINCT descendant "
+            "ORDER BY descendant.name"
+        )
+        results = await self._run_query(query, {"id": schema_id})
+        return [r["descendant"] for r in results]
+
+    async def find_common_ancestor(
+        self, schema_id_a: str, schema_id_b: str
+    ) -> Optional[dict[str, Any]]:
+        """Find the nearest common ancestor of two Schema nodes.
+
+        Args:
+            schema_id_a: Element ID of the first Schema node.
+            schema_id_b: Element ID of the second Schema node.
+
+        Returns:
+            The common ancestor Schema node properties, or None if no
+            common ancestor exists.
+        """
+        query = (
+            "MATCH (a:Schema) WHERE elementId(a) = $id_a "
+            "MATCH (b:Schema) WHERE elementId(b) = $id_b "
+            "MATCH (a)-[:SUBCLASS_OF*0..]->(common:Schema) "
+            "WHERE (b)-[:SUBCLASS_OF*0..]->(common) "
+            "RETURN common "
+            "ORDER BY size([(common)-[:SUBCLASS_OF*0..]->() | 1]) ASC "
+            "LIMIT 1"
+        )
+        results = await self._run_query(
+            query, {"id_a": schema_id_a, "id_b": schema_id_b}
+        )
+        return results[0]["common"] if results else None
+
+    async def get_schema_with_ancestors(
+        self, schema_id: str
+    ) -> dict[str, Any]:
+        """Get a Schema node along with its ancestor chain.
+
+        Useful for hierarchy-aware merging: when looking for merge targets,
+        you can check ancestors to find broader categories.
+
+        Args:
+            schema_id: Element ID of the Schema node.
+
+        Returns:
+            Dictionary with 'schema' (the node itself) and 'ancestors'
+            (list of ancestor node properties).
+        """
+        schema_node = await self.get_schema_node(schema_id)
+        ancestors = await self.get_schema_ancestors(schema_id)
+        return {
+            "schema": schema_node,
+            "ancestors": ancestors,
+        }
+
     # ---- Instance Node CRUD ----
 
     async def create_entity_node(

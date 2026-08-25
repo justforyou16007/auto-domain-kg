@@ -45,7 +45,7 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "entity_collection": {
         "name": "entity-collection",
-        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence serves the current iteration's Schema and Instance entities. Collectors must distinguish concepts from instances and capture source_url/source_text for provenance. Evidence is collected incrementally per iteration, saved to data/evidence/.",
+        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence serves the current iteration's Schema and Instance entities. Collectors must distinguish concepts from instances and capture source_url/source_text for provenance. Evidence is collected incrementally per iteration, saved to data/evidence/. Each entity must be supported by 2-3 independent sources for cross-validation.",
     },
     "schema_refinement": {
         "name": "schema-refinement",
@@ -53,7 +53,7 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "triple_extraction": {
         "name": "triple-extraction",
-        "description": "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
+        "description": "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
     },
     "graph_persistence": {
         "name": "graph-persistence",
@@ -73,7 +73,7 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "evidence_audit": {
         "name": "evidence-audit",
-        "description": "Verifier skill. Audit entity and relationship evidence for multi-source consistency. Verify that evidence slices match source URLs and that facts are corroborated across sources.",
+        "description": "Verifier skill. Audit entity and relationship evidence for multi-source consistency using code-level cross-validation. Verify that evidence slices match source URLs, that facts are corroborated across sources, and flag single-source or conflicting evidence. Use EvidenceStore.cross_validate() and is_well_supported() for automated checks.",
     },
     "task_relevance_audit": {
         "name": "task-relevance-audit",
