@@ -51,11 +51,35 @@ verifier_provider: codex/gpt-4o
 - Link entities to schema nodes.
 - Embed for vector search.
 
-### Step 5: Verifier Audit (Auto-driven loop, no user confirmation)
-- Load and run all verifier skills (schema_audit, graph_structure_audit, graphrag_validation, evidence_audit, task_relevance_audit).
-- Verifier (Codex) audits the graph and outputs issues.
-- Worker automatically fixes issues based on verifier feedback.
-- Loop until all audits pass or max iterations reached.
+### Step 5: Verifier Audit (Adversarial Loop with Traceability)
+The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability.
+
+1. **Load rubrics**: Load audit rubrics from `config/audit_rubrics.yaml` (defaults to the **strictest** level). Use `RubricsConfig.load_from_file()`, falling back to `RubricsConfig.load_default()`.
+   ```python
+   from auto_domain_kg.audit_rubrics import RubricsConfig
+   config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")
+   ```
+2. **Run all 5 audit sub-agents** in parallel, each applying its rubric thresholds:
+   - `schema_audit` — completeness, consistency, inheritance, redundancy
+   - `graph_structure_audit` — connectivity, orphan nodes, density
+   - `graphrag_validation` — can the graph answer domain questions?
+   - `evidence_audit` — multi-source consistency, quality
+   - `task_relevance_audit` — does the graph address user concerns?
+   Each sub-audit emits a structured result (passed, issues with stable `id`/`severity`, summary stats).
+3. **Generate audit report**: Aggregate sub-audit results via `AuditReportGenerator.generate_report()`. Under STRICT auditing, any error-level issue blocks the round from passing (`overall_passed == False`); warnings are tracked but do not block.
+   ```python
+   from auto_domain_kg.audit_report import AuditReportGenerator, AuditHistory
+   generator = AuditReportGenerator()
+   report = generator.generate_report(round_number, sub_reports, config, worker_fixes)
+   ```
+4. **Save the report**: `generator.save_report(report, output_dir="reports/audits/")` writes both `reports/audits/round_N/audit_report.md` and `.json`.
+5. **Append to history**: `AuditHistory("reports/audits/").add_round(report)` persists the round to `reports/audits/audit_history.jsonl` (JSONL) for full traceability.
+6. **If issues found (any error-level)**: send the issues to the worker. The worker fixes them and records what it changed as `worker_fixes` entries (`fix_description`, `issue_ids_addressed`, `files_modified`).
+7. **Re-run the audit** (next round), passing the recorded `worker_fixes`. The loop compares the new round against the previous one via `AuditHistory` — use `get_issue_trace(issue_id)` to see when an issue was first found, how the worker fixed it, and whether it reappeared.
+8. **Loop** until all audits pass (`overall_passed == True`) or the max rounds is reached (configurable, default 5).
+9. **Final convergence summary**: `AuditHistory.get_summary()` reports total rounds, issues resolved, issues recurring, and the per-round error/warning convergence trend.
+
+Each round's audit report and worker fixes are persisted for full traceability. This makes the GAN adversarial process substantively effective — the verifier's strict findings drive concrete worker fixes, and every fix is traceable back to the issue it addressed.
 
 ### Step 6: Completion
 - Print summary of what was built.

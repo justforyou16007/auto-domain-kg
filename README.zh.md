@@ -92,7 +92,7 @@ bash install.sh .
 ```bash
 # 创建项目目录结构
 mkdir -p src/auto_domain_kg skills/worker skills/verifier skills/updater skills/risk
-mkdir -p data/evidence tmp tests
+mkdir -p data/evidence tmp tests config reports/audits templates
 
 # 初始化 Python 项目
 uv init --name "auto-domain-kg" --python ">=3.12"
@@ -182,15 +182,22 @@ i. **重复** —— 用新查询从步骤 **b** 重新开始，直到搜索结�
 
 **技能文件**：`skills/worker/graph_persistence/SKILL.md`
 
-### 第五步：Verifier 审计（自动驱动循环）
-Verifier（Codex）审计图谱并驱动修复：
-1. **模式审计**：完整性、一致性、继承关系、冗余检测
-2. **图谱结构审计**：连通性、孤立节点、密度评估
-3. **GraphRAG 验证**：图谱能否回答领域相关问题？
-4. **证据审计**：多源一致性、证据质量
-5. **任务相关性审计**：图谱是否覆盖了用户关注点？
+### 第五步：Verifier 审计（带可追溯性的对抗循环）
+GAN 风格的 Verifier（判别器）与 Worker（生成器）之间的对抗循环，带有完整的审计报告输出与可追溯性。默认采用**最严格**的审计策略——任何 error 级别的问题都会阻止该轮通过。
 
-Worker 将自动修复发现的问题。循环持续进行，直至所有审计项目通过。
+1. **加载 rubrics** —— 从 `config/audit_rubrics.yaml` 加载审计 rubrics（默认最严格；可在该文件中自定义阈值，无需改动技能代码）
+2. **运行全部 5 个审计子智能体**，各自应用其 rubric 阈值：
+   - **模式审计**：完整性、一致性、继承关系、冗余检测
+   - **图谱结构审计**：连通性、孤立节点、密度评估
+   - **GraphRAG 验证**：图谱能否回答领域相关问题？
+   - **证据审计**：多源一致性、证据质量
+   - **任务相关性审计**：图谱是否覆盖用户关注点？
+3. **生成审计报告** —— 通过 `AuditReportGenerator` 生成（markdown + JSON），保存到 `reports/audits/round_N/`
+4. **追加到 `AuditHistory`**（`reports/audits/audit_history.jsonl`）以便追溯
+5. **若发现 error 级别问题** —— 将问题发送给 Worker，Worker 修复并记录其改动（`fix_description`、`issue_ids_addressed`、`files_modified`）
+6. **重新运行审计**（下一轮）并与上一轮对比 —— 用 `AuditHistory.get_issue_trace(issue_id)` 追踪问题在各轮间的变化（首次发现 → 已修复 → 是否复发）
+7. **循环**直至所有审计通过或达到最大轮数（默认 5）
+8. **最终收敛摘要** —— 通过 `AuditHistory.get_summary()` 输出（轮数、已解决问题、复发问题、error/warning 趋势）
 
 **技能文件**：`skills/verifier/schema_audit/SKILL.md`、`skills/verifier/graph_structure_audit/SKILL.md`、`skills/verifier/graphrag_validation/SKILL.md`、`skills/verifier/evidence_audit/SKILL.md`、`skills/verifier/task_relevance_audit/SKILL.md`
 
@@ -242,6 +249,51 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 **技能文件**：`skills/risk/risk_assessment/SKILL.md`
 **Python 模块**：`src/auto_domain_kg/risk_assessment.py`
 
+## 审计报告与对抗可追溯性（Issues #14、#15）
+
+Verifier 审计（第五步）现在会生成详细的**审计报告**，并运行真正的 **GAN 风格对抗循环**，带有完整可追溯性。审计严格度默认为**最严格**，确保图谱不完整或不可用时绝不通过。
+
+### 审计报告
+每轮对抗生成一份详细的审计报告（markdown + JSON），描述图的各项审计特征：
+- **Schema 完整性统计**（实体类型数、缺失类型、未定义关系）
+- **图连通性指标**（实体总数、孤立实体、每实体平均关系数）
+- **证据来源计数**（已审计实体、单源实体、冲突证据）
+- **GraphRAG 问题结果**（总数/可回答/不可回答、每个问题的精确度）
+- **任务相关性覆盖**（完全/部分/未覆盖、完全覆盖比例）
+- **问题分解**——按严重程度（error/warning/info）与类别分组，每个问题带稳定的 `id`
+- **Worker 修复追溯**（Worker 改了什么、解决了哪些问题 id、修改了哪些文件）
+
+报告保存到 `reports/audits/round_N/audit_report.md`（及 `.json`）。渲染方式：
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator
+md = generator.render_markdown(report)   # 人类可读
+js = generator.render_json(report)        # 机器消费
+```
+报告模板位于 `templates/audit_report_template.md`。
+
+### 自定义审计 Rubrics
+审计阈值可通过 `config/audit_rubrics.yaml` 由用户自定义（覆盖全部 5 个审计技能，默认严格）：
+- `schema_audit`：`max_missing_entity_types=0`、`max_undefined_relationships=0`
+- `graph_structure_audit`：`max_orphan_entities=0`、`min_avg_relationships=1.0`
+- `graphrag_validation`：`min_answerable_ratio=0.8`、`min_precision="medium"`
+- `evidence_audit`：`min_sources_per_entity=2`、`min_sources_per_critical=3`
+- `task_relevance_audit`：`min_fully_covered_ratio=0.7`
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")  # 或 .load_default()
+config.set_strictness("strict")  # strict | moderate | lenient
+config.save_to_file("config/audit_rubrics.yaml")
+```
+
+### 对抗可追溯性
+每一轮的审计报告与 Worker 修复都会持久化到 `reports/audits/audit_history.jsonl`（JSONL）。`AuditHistory` 提供：
+- `get_round(n)` —— 获取指定轮次
+- `get_issue_trace(issue_id)` —— 追踪问题在各轮间的变化（首次发现 → 已修复 → 是否复发）
+- `get_summary()` —— 总轮数、已解决问题、复发问题、各轮收敛趋势
+
+在最严格审计下，**任何 error 级别的问题都会阻止该轮通过**；warning 会被记录但不阻止。循环持续到所有审计通过或达到最大轮数（默认 5）。
+
 ## Python 模块说明
 
 ### `neo4j_client.py`
@@ -261,6 +313,12 @@ Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多�
 
 ### `risk_assessment.py`
 风险字段管理、6步新闻→图谱影响分析流程及智能体引导的图谱遍历。方法包括：`extract_events_from_news()`、`associate_evidence()`、`graphrag_event_search()`、`trace_dag_impact()`、`generate_report()`、`run_full_analysis()`。风险等级：NONE、LOW、MEDIUM、HIGH、CRITICAL。
+
+### `audit_rubrics.py`
+用户可自定义的审计 rubrics，驱动 5 个 Verifier 审计技能。`RubricItem`（name、description、strictness_level、enabled、custom_thresholds）与 `RubricsConfig`（`load_default()`、`load_from_file()`、`save_to_file()`、`get_enabled_rubrics()`、`set_strictness()`）。默认为最严格级别。配置文件：`config/audit_rubrics.yaml`。
+
+### `audit_report.py`
+审计报告生成与对抗可追溯性。`AuditReport`（完整单轮审计状态）、`AuditReportGenerator`（`generate_report()`、`render_markdown()`、`render_json()`、`save_report()`）与 `AuditHistory`（`add_round()`、`get_round()`、`get_all_rounds()`、`get_issue_trace()`、`get_summary()`）。STRICT 策略：任何 error 级别的问题都会阻止该轮通过。历史以 JSONL 持久化到 `reports/audits/audit_history.jsonl`。
 
 ## 扩展新的新闻适配器
 
@@ -334,7 +392,9 @@ auto-domain-kg/
 │       ├── news_adapter.py
 │       ├── evidence_store.py
 │       ├── graph_ops.py
-│       └── risk_assessment.py
+│       ├── risk_assessment.py
+│       ├── audit_rubrics.py
+│       └── audit_report.py
 ├── skills/
 │   ├── worker/             # Worker 技能文件（6 个目录）
 │   │   ├── socratic_inquiry/SKILL.md
@@ -353,13 +413,17 @@ auto-domain-kg/
 │   │   └── daily_update/SKILL.md
 │   └── risk/               # 风险评估技能文件
 │       └── risk_assessment/SKILL.md
+├── config/                 # 审计 rubrics 配置
+│   └── audit_rubrics.yaml
 ├── templates/              # 报告模板
-│   └── default_domain_report_template.md
-├── reports/                # 生成的风险报告
+│   ├── default_domain_report_template.md
+│   └── audit_report_template.md
+├── reports/                # 生成的风险报告与审计报告
+│   └── audits/             # 审计报告 + audit_history.jsonl
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件
-└── tests/                  # pytest 测试文件（7 个）
+└── tests/                  # pytest 测试文件（9 个）
 ```
 
 ## 许可证

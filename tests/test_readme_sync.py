@@ -78,24 +78,24 @@ def test_zh_readme_has_schema_instance_section() -> None:
 
 
 def test_en_readme_test_count_is_seven() -> None:
-    """English README must report 7 test files (not 6) in the Project Structure."""
+    """English README must report 9 test files (audit_report + audit_rubrics added)."""
     en = _read(README_EN)
-    assert "pytest tests (7 files)" in en, (
-        "README.md Project Structure does not report 7 test files"
+    assert "pytest tests (9 files)" in en, (
+        "README.md Project Structure does not report 9 test files"
     )
-    assert "pytest tests (6 files)" not in en, (
-        "README.md still reports 6 test files"
+    assert "pytest tests (7 files)" not in en, (
+        "README.md still reports 7 test files"
     )
 
 
 def test_zh_readme_test_count_is_seven() -> None:
-    """Chinese README must report 7 test files (not 6) in the Project Structure."""
+    """Chinese README must report 9 test files (audit_report + audit_rubrics added)."""
     zh = _read(README_ZH)
-    assert "pytest 测试文件（7 个）" in zh, (
-        "README.zh.md Project Structure does not report 7 test files"
+    assert "pytest 测试文件（9 个）" in zh, (
+        "README.zh.md Project Structure does not report 9 test files"
     )
-    assert "pytest 测试文件（6 个）" not in zh, (
-        "README.zh.md still reports 6 test files"
+    assert "pytest 测试文件（7 个）" not in zh, (
+        "README.zh.md still reports 7 test files"
     )
 
 

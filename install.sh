@@ -123,6 +123,8 @@ mkdir -p "$PROJECT_DIR/data/evidence"
 mkdir -p "$PROJECT_DIR/tmp"
 mkdir -p "$PROJECT_DIR/templates"
 mkdir -p "$PROJECT_DIR/reports"
+mkdir -p "$PROJECT_DIR/reports/audits"
+mkdir -p "$PROJECT_DIR/config"
 mkdir -p "$PROJECT_DIR/tests"
 log_ok "Directory structure created."
 
@@ -130,7 +132,7 @@ log_ok "Directory structure created."
 log_info "Copying scaffold files..."
 if [ "$SCRIPTS_DIR" != "$PROJECT_DIR" ]; then
     # Copy all files from the install.sh location to the project dir
-    for item in src skills data tmp tests .mcp.json CLAUDE.md pyproject.toml README.md; do
+    for item in src skills data tmp tests config templates .mcp.json CLAUDE.md pyproject.toml README.md README.zh.md; do
         if [ -e "$SCRIPTS_DIR/$item" ]; then
             cp -r "$SCRIPTS_DIR/$item" "$PROJECT_DIR/$item" 2>/dev/null || true
         fi

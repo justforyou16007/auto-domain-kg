@@ -74,3 +74,37 @@ You are the **Evidence Auditor** (Codex verifier). Your task is to review the ev
   }
 }
 ```
+
+## Rubrics Integration (Issues #14, #15)
+
+### Load Rubrics
+Before auditing, load the strict rubrics that drive this skill:
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+
+# Load custom rubrics (default location), falling back to strict defaults.
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")
+# or: config = RubricsConfig.load_default()
+```
+
+### Strict Thresholds (default strict)
+Apply these thresholds from the `evidence_audit` rubric during the audit:
+- `min_sources_per_entity = 2` — any entity (or relational fact) with fewer than 2 independent sources is an **error**.
+- `min_sources_per_critical = 3` — any critical fact (risk event, major change) with fewer than 3 sources is an **error**.
+
+Use `EvidenceStore.is_well_supported(entity_id, min_sources=2)` for entities and `min_sources=3` for critical facts. Under STRICT auditing: **any error-level issue blocks the round from passing**. Warnings are tracked but do not block.
+
+### Structured Output for AuditReportGenerator
+Each issue MUST carry a stable `id` (e.g. `EVID-001`), `severity` (`error`|`warning`|`info`), `category` (`single_source`|`conflicting`|`quality`|`provenance`), `entity_id`, `description`, `source_count`, and `suggestion`. The `summary` block must report `total_entities_audited`, `total_relations_audited`, `single_source_entities`, `single_source_relations`, `conflicting_evidence`, and `quality_issues`. This dict is consumed directly by `auto_domain_kg.audit_report.AuditReportGenerator.generate_report()`.
+
+### Report Generation
+After auditing, hand the structured result to the main agent, which calls:
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator, AuditHistory
+generator = AuditReportGenerator()
+# report = generator.generate_report(round_number, sub_reports, config, worker_fixes)
+# generator.save_report(report, output_dir="reports/audits/")
+# AuditHistory("reports/audits/").add_round(report)
+```
+Each round's audit report (markdown + JSON) is saved to `reports/audits/round_N/` and appended to `reports/audits/audit_history.jsonl` for full adversarial traceability.

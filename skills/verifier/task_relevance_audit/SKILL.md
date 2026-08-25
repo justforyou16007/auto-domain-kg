@@ -69,3 +69,36 @@ You are the **Task Relevance Auditor** (Codex verifier). Your task is to evaluat
   }
 }
 ```
+
+## Rubrics Integration (Issues #14, #15)
+
+### Load Rubrics
+Before auditing, load the strict rubrics that drive this skill:
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+
+# Load custom rubrics (default location), falling back to strict defaults.
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")
+# or: config = RubricsConfig.load_default()
+```
+
+### Strict Thresholds (default strict)
+Apply this threshold from the `task_relevance_audit` rubric during the audit:
+- `min_fully_covered_ratio = 0.7` — if fewer than 70% of user concerns are fully covered, it is an **error**.
+
+Compute `fully_covered_ratio = fully_covered / total_concerns` and compare against the threshold. A concern with `coverage_level` of `none` is an **error**; `partial` is a **warning**. Under STRICT auditing: **any error-level issue blocks the round from passing**. Warnings are tracked but do not block.
+
+### Structured Output for AuditReportGenerator
+Each issue MUST carry a stable `id` (e.g. `RELEV-001`), `severity` (`error`|`warning`|`info`), `category` (`coverage`|`domain`|`actionability`|`gap`), `description`, and `suggestion`. The `summary` block must report `total_concerns`, `fully_covered`, `partially_covered`, and `not_covered`. This dict is consumed directly by `auto_domain_kg.audit_report.AuditReportGenerator.generate_report()`.
+
+### Report Generation
+After auditing, hand the structured result to the main agent, which calls:
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator, AuditHistory
+generator = AuditReportGenerator()
+# report = generator.generate_report(round_number, sub_reports, config, worker_fixes)
+# generator.save_report(report, output_dir="reports/audits/")
+# AuditHistory("reports/audits/").add_round(report)
+```
+Each round's audit report (markdown + JSON) is saved to `reports/audits/round_N/` and appended to `reports/audits/audit_history.jsonl` for full adversarial traceability.

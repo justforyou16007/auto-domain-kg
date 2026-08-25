@@ -59,3 +59,37 @@ For each question, evaluate:
   }
 }
 ```
+
+## Rubrics Integration (Issues #14, #15)
+
+### Load Rubrics
+Before auditing, load the strict rubrics that drive this skill:
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+
+# Load custom rubrics (default location), falling back to strict defaults.
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")
+# or: config = RubricsConfig.load_default()
+```
+
+### Strict Thresholds (default strict)
+Apply these thresholds from the `graphrag_validation` rubric during the audit:
+- `min_answerable_ratio = 0.8` — if fewer than 80% of domain questions are answerable, it is an **error**.
+- `min_precision = "medium"` — any answerable question with precision below `medium` (i.e. `low`) is an **error**.
+
+Compute `answerable_ratio = answerable / total_questions` and compare against the threshold. Under STRICT auditing: **any error-level issue blocks the round from passing**. Warnings are tracked but do not block.
+
+### Structured Output for AuditReportGenerator
+Each question entry should carry `question`, `query_type`, `answerable`, `precision`, `result_count`, and `issues`. Any unanswerable/low-precision result MUST also appear as a top-level `issues` entry with a stable `id` (e.g. `GRAG-001`), `severity`, `category`, `description`, and `suggestion`. The `summary` block must report `total_questions`, `answerable`, `unanswerable`, and `issues_found`. This dict is consumed directly by `auto_domain_kg.audit_report.AuditReportGenerator.generate_report()`.
+
+### Report Generation
+After auditing, hand the structured result to the main agent, which calls:
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator, AuditHistory
+generator = AuditReportGenerator()
+# report = generator.generate_report(round_number, sub_reports, config, worker_fixes)
+# generator.save_report(report, output_dir="reports/audits/")
+# AuditHistory("reports/audits/").add_round(report)
+```
+Each round's audit report (markdown + JSON) is saved to `reports/audits/round_N/` and appended to `reports/audits/audit_history.jsonl` for full adversarial traceability.
