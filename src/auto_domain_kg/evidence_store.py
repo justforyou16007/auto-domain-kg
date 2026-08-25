@@ -220,3 +220,239 @@ class EvidenceStore:
             "relation_count": len(relations),
             "total_records": total,
         }
+
+    def get_source_urls(
+        self, entity_id: str, relation_id: str = ""
+    ) -> list[str]:
+        """Get all unique source URLs for an entity or relation.
+
+        Args:
+            entity_id: Entity identifier.
+            relation_id: Optional relation identifier. If provided, sources
+                        for the relation are returned instead.
+
+        Returns:
+            Deduplicated list of source URLs.
+        """
+        if relation_id:
+            records = self.load_evidence_by_relation(relation_id)
+        else:
+            records = self.load_evidence_by_entity(entity_id)
+
+        sources: list[str] = []
+        seen: set[str] = set()
+        for r in records:
+            url = r.source_url.strip()
+            if url and url not in seen:
+                seen.add(url)
+                sources.append(url)
+        return sources
+
+    def get_source_count(
+        self, entity_id: str, relation_id: str = ""
+    ) -> int:
+        """Count the number of independent sources for an entity or relation.
+
+        Args:
+            entity_id: Entity identifier.
+            relation_id: Optional relation identifier. If provided, sources
+                        for the relation are counted instead.
+
+        Returns:
+            Number of unique source URLs.
+        """
+        return len(self.get_source_urls(entity_id, relation_id))
+
+    @staticmethod
+    def _detect_conflicts(
+        texts_by_source: dict[str, list[str]],
+        source_keywords: dict[str, set[str]],
+        common_keywords: set[str],
+    ) -> bool:
+        """Detect contradictory statements across sources.
+
+        A conflict is identified when a content keyword shared by multiple
+        sources is **affirmed** by at least one source and **negated** by
+        another. Negation is detected by looking for negation markers
+        ("not", "no", "never", "denies", "refuted", ...) appearing within a
+        small window before the keyword in one source but not in another.
+
+        Args:
+            texts_by_source: Mapping of source URL to its text slices.
+            source_keywords: Mapping of source URL to the set of content
+                keywords extracted from that source.
+            common_keywords: Content keywords shared across all sources.
+
+        Returns:
+            True if a contradictory (differing negation polarity) statement
+            is found, False otherwise.
+        """
+        negation_markers = {
+            "not", "no", "never", "nor", "none", "cannot", "neither",
+            "denies", "denied", "refuted", "disputes", "contradicts",
+            "false", "untrue", "wrong",
+        }
+
+        # Precompute, for each source, the set of keywords that are negated
+        # (a negation marker appears within 3 words before the keyword).
+        negated_by_source: dict[str, set[str]] = {}
+        for url, texts in texts_by_source.items():
+            negated: set[str] = set()
+            for text in texts:
+                words = [
+                    w.strip(".,!?;:\"'()[]{}").lower()
+                    for w in text.split()
+                ]
+                for i, word in enumerate(words):
+                    if not word or word not in common_keywords:
+                        continue
+                    window = words[max(0, i - 3):i]
+                    if any(w in negation_markers for w in window):
+                        negated.add(word)
+            negated_by_source[url] = negated
+
+        # A conflict exists if some shared keyword is negated in one source
+        # but affirmed (present but not negated) in another.
+        sources = list(negated_by_source.keys())
+        for keyword in common_keywords:
+            negated_in = [s for s in sources if keyword in negated_by_source[s]]
+            affirmed_in = [
+                s for s in sources
+                if keyword in source_keywords.get(s, set())
+                and s not in negated_in
+            ]
+            if negated_in and affirmed_in:
+                return True
+        return False
+
+    def cross_validate(
+        self, entity_id: str, relation_id: str = ""
+    ) -> dict:
+        """Cross-validate evidence for an entity or relation across sources.
+
+        Checks whether multiple sources agree on key facts by comparing
+        text slices. Sources are considered conflicting if they contain
+        contradictory statements about the same fact.
+
+        Args:
+            entity_id: Entity identifier.
+            relation_id: Optional relation identifier. If provided, the
+                        relation's evidence is validated instead.
+
+        Returns:
+            Dictionary with:
+                has_consensus: True if sources generally agree.
+                source_count: Number of independent sources.
+                sources: List of unique source URLs.
+                conflicting: True if contradictory evidence was found.
+                details: Human-readable description of the validation result.
+        """
+        if relation_id:
+            records = self.load_evidence_by_relation(relation_id)
+        else:
+            records = self.load_evidence_by_entity(entity_id)
+
+        source_urls = self.get_source_urls(entity_id, relation_id)
+        source_count = len(source_urls)
+
+        if source_count == 0:
+            return {
+                "has_consensus": False,
+                "source_count": 0,
+                "sources": [],
+                "conflicting": False,
+                "details": "No evidence found for this entity/relation.",
+            }
+
+        if source_count == 1:
+            return {
+                "has_consensus": False,
+                "source_count": 1,
+                "sources": source_urls,
+                "conflicting": False,
+                "details": (
+                    "Single source only. At least 2 independent sources "
+                    "are recommended for reliable evidence."
+                ),
+            }
+
+        # Group text slices by source URL
+        texts_by_source: dict[str, list[str]] = {}
+        for r in records:
+            url = r.source_url.strip()
+            if url:
+                texts_by_source.setdefault(url, []).append(r.text_slice)
+
+        # Simple consensus check: look for common keywords across sources
+        source_keywords: dict[str, set[str]] = {}
+        for url, texts in texts_by_source.items():
+            keywords: set[str] = set()
+            for t in texts:
+                for word in t.lower().split():
+                    if len(word) >= 3 and not word.isdigit():
+                        keywords.add(word.strip(".,!?;:\"'()[]{}"))
+            source_keywords[url] = keywords
+
+        # Check for keyword overlap across sources
+        url_list = list(texts_by_source.keys())
+        if len(url_list) >= 2:
+            common_keywords = source_keywords[url_list[0]].copy()
+            for url in url_list[1:]:
+                common_keywords &= source_keywords[url]
+
+            # Detect contradictory statements across sources. A conflict is
+            # flagged when the same content keyword is affirmed by one source
+            # and negated by another (different negation polarity).
+            conflicting = self._detect_conflicts(
+                texts_by_source, source_keywords, common_keywords
+            )
+
+            has_consensus = len(common_keywords) >= 3 and not conflicting
+            details = (
+                f"Multiple sources ({source_count}) found. "
+                f"Sources share {len(common_keywords)} common keywords. "
+            )
+            if conflicting:
+                details += (
+                    "Sources contain contradictory statements — flag for "
+                    "human review."
+                )
+            elif has_consensus:
+                details += "Evidence is consistent across sources."
+            else:
+                details += (
+                    "Limited keyword overlap — sources may cover "
+                    "different aspects of the same entity."
+                )
+        else:
+            has_consensus = False
+            conflicting = False
+            details = "Single source only."
+
+        return {
+            "has_consensus": has_consensus,
+            "source_count": source_count,
+            "sources": source_urls,
+            "conflicting": conflicting,
+            "details": details,
+        }
+
+    def is_well_supported(
+        self,
+        entity_id: str,
+        relation_id: str = "",
+        min_sources: int = 2,
+    ) -> bool:
+        """Check if an entity or relation is supported by enough sources.
+
+        Args:
+            entity_id: Entity identifier.
+            relation_id: Optional relation identifier. If provided, checks
+                        the relation's evidence instead.
+            min_sources: Minimum number of independent sources required
+                        (default 2).
+
+        Returns:
+            True if the number of unique sources >= min_sources.
+        """
+        return self.get_source_count(entity_id, relation_id) >= min_sources

@@ -48,24 +48,35 @@ class GraphOps:
         schema_type: str,
         description: str,
         fields: Optional[list[dict[str, str]]] = None,
+        parent_schema_id: Optional[str] = None,
     ) -> str:
-        """Create a schema node in Neo4j.
+        """Create a schema node in Neo4j, optionally with a parent hierarchy.
 
         Args:
             name: Schema name (e.g., "Supplier", "Material").
             schema_type: Type of schema (e.g., "entity", "relationship").
             description: Description of this schema type.
             fields: List of field definitions.
+            parent_schema_id: Optional element ID of a parent Schema node.
+                              If provided, a SUBCLASS_OF relationship is
+                              automatically created from the new node to
+                              the parent.
 
         Returns:
             Element ID of the created schema node.
         """
-        return await self._neo4j.create_schema_node(
+        schema_id = await self._neo4j.create_schema_node(
             name=name,
             schema_type=schema_type,
             description=description,
             fields=fields,
         )
+        if schema_id and parent_schema_id:
+            await self._neo4j.create_schema_hierarchy(
+                child_schema_id=schema_id,
+                parent_schema_id=parent_schema_id,
+            )
+        return schema_id
 
     async def create_entity_node(
         self,
@@ -281,3 +292,139 @@ class GraphOps:
             property_name="embedding",
             dimensions=dimensions,
         )
+
+    async def find_merge_target_with_hierarchy(
+        self,
+        entity_name: str,
+        schema_id: str,
+        similarity_threshold: float = 0.85,
+    ) -> Optional[dict[str, Any]]:
+        """Find a merge target for an entity with hierarchy-aware search.
+
+        Searches for a semantically similar entity in the current Schema
+        level first. If none found, traverses up the SUBCLASS_OF hierarchy
+        to look for merge targets in parent Schema nodes.
+
+        Args:
+            entity_name: Name of the entity to find a merge target for.
+            schema_id: Element ID of the current Schema node.
+            similarity_threshold: Vector similarity threshold (default 0.85).
+
+        Returns:
+            Dictionary with 'entity' (node properties), 'schema_name'
+            (name of the Schema where the target was found), and
+            'similarity' (score) if found, or None if no merge target.
+        """
+        # Step 1: Try vector search at the current Schema level
+        query_vector = await self._embedding.embed(entity_name)
+        if not query_vector:
+            return None
+
+        candidates = await self._neo4j.vector_search(
+            index_name=self._vector_index_name,
+            query_vector=query_vector,
+            top_k=5,
+        )
+
+        # Filter candidates that belong to the same schema
+        for c in candidates:
+            node = c.get("node", {})
+            score = c.get("score", 0.0)
+            if score >= similarity_threshold:
+                # Check if this entity belongs to the target schema
+                schema_info = await self._neo4j.get_schema_with_entities(
+                    schema_id
+                )
+                entity_ids = {
+                    e.get("elementId", "") for e in schema_info.get("entities", [])
+                }
+                node_id = node.get("elementId", "")
+                if node_id in entity_ids:
+                    return {
+                        "entity": node,
+                        "schema_name": "",
+                        "similarity": score,
+                    }
+
+        # Step 2: If no match at current level, traverse ancestors
+        ancestors = await self._neo4j.get_schema_ancestors(schema_id)
+        for ancestor in ancestors:
+            ancestor_id = ancestor.get("elementId", "")
+            if not ancestor_id:
+                # Try to get schema by name
+                ancestor_name = ancestor.get("name", "")
+                ancestor_node = await self._neo4j.get_schema_by_name(
+                    ancestor_name
+                )
+                if ancestor_node:
+                    ancestor_id = ancestor_node.get("elementId", "")
+
+            if ancestor_id:
+                schema_info = await self._neo4j.get_schema_with_entities(
+                    ancestor_id
+                )
+                for e in schema_info.get("entities", []):
+                    # Check similarity with each entity in ancestor schema
+                    entity_name_str = e.get("name", "")
+                    if entity_name_str.lower() == entity_name.lower():
+                        return {
+                            "entity": e,
+                            "schema_name": ancestor.get("name", ""),
+                            "similarity": 1.0,
+                        }
+
+                # Also use vector search against ancestor entities
+                candidates2 = await self._neo4j.vector_search(
+                    index_name=self._vector_index_name,
+                    query_vector=query_vector,
+                    top_k=5,
+                )
+                for c in candidates2:
+                    node = c.get("node", {})
+                    score = c.get("score", 0.0)
+                    if score >= similarity_threshold:
+                        entity_ids2 = {
+                            e2.get("elementId", "")
+                            for e2 in schema_info.get("entities", [])
+                        }
+                        node_id2 = node.get("elementId", "")
+                        if node_id2 in entity_ids2:
+                            return {
+                                "entity": node,
+                                "schema_name": ancestor.get("name", ""),
+                                "similarity": score,
+                            }
+
+        return None
+
+    async def merge_entity_to_parent_schema(
+        self, entity_id: str, parent_schema_id: str
+    ) -> str:
+        """Re-link an entity to a parent Schema node (hierarchy promotion).
+
+        Removes the entity's existing HAS_SCHEMA relationship and creates
+        a new one pointing to the parent Schema. This is used when merging
+        entities from child schemas up to a common parent.
+
+        Args:
+            entity_id: Element ID of the entity to re-link.
+            parent_schema_id: Element ID of the parent Schema node.
+
+        Returns:
+            Element ID of the new HAS_SCHEMA relationship.
+        """
+        # Remove existing HAS_SCHEMA relationships
+        query = (
+            "MATCH (e) WHERE elementId(e) = $entity_id "
+            "MATCH (e)-[r:HAS_SCHEMA]->(s:Schema) "
+            "DELETE r"
+        )
+        await self._neo4j._run_query(
+            query, {"entity_id": entity_id}
+        )
+
+        # Create new HAS_SCHEMA to parent
+        new_link_id = await self._neo4j.link_entity_to_schema(
+            entity_id=entity_id, schema_id=parent_schema_id
+        )
+        return new_link_id

@@ -52,6 +52,16 @@ Before persisting, and after each batch:
   - Merge/redirect relationships.
   - Log the merge in `tmp/persistence_log.md`.
 
+#### Hierarchy-Aware Semantic Merging
+When merging entities, the system does not limit the search to the current Schema level — it also checks parent Schema nodes along the SUBCLASS_OF hierarchy:
+
+- **Current-level search first**: Use `GraphOps.find_merge_target_with_hierarchy(entity_name, schema_id)` to search the current Schema level for semantically similar entities.
+- **Parent-level fallback**: If no merge target is found at the current level, the method automatically traverses SUBCLASS_OF upward to search parent Schema nodes.
+- **Hierarchy promotion**: If a merge target is found in a parent Schema, the entity can be re-linked to the parent Schema using `GraphOps.merge_entity_to_parent_schema(entity_id, parent_schema_id)`.
+- **Example**: If "电子器件" and "工业器件" both have entities with the same semantic meaning, those entities can be merged under their common ancestor "器件" instead of being duplicated in both child schemas.
+
+This hierarchy-aware approach reduces entity duplication and ensures that entities from related sub-domains are properly consolidated.
+
 ### 5. Set Up Vector Index
 - Call `GraphOps.setup_vector_index()` to create the vector index for similarity search.
 

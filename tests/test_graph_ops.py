@@ -239,6 +239,95 @@ async def test_get_entity_relationships(graph_ops, mock_neo4j):
 
 
 @pytest.mark.asyncio
+async def test_create_schema_node_with_parent(graph_ops, mock_neo4j):
+    """Test creating a schema node with a parent hierarchy."""
+    mock_neo4j.create_schema_hierarchy = AsyncMock(return_value="hierarchy-1")
+    result = await graph_ops.create_schema_node(
+        name="Supplier",
+        schema_type="entity",
+        description="A supplier entity",
+        parent_schema_id="parent-schema-1",
+    )
+    assert result == "schema-1"
+    mock_neo4j.create_schema_node.assert_called_once()
+    mock_neo4j.create_schema_hierarchy.assert_called_once_with(
+        child_schema_id="schema-1",
+        parent_schema_id="parent-schema-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_schema_node_without_parent(graph_ops, mock_neo4j):
+    """Test creating a schema node without parent hierarchy."""
+    mock_neo4j.create_schema_hierarchy = AsyncMock()
+    mock_neo4j.create_schema_node.reset_mock()
+    result = await graph_ops.create_schema_node(
+        name="Supplier",
+        schema_type="entity",
+        description="A supplier entity",
+    )
+    assert result == "schema-1"
+    mock_neo4j.create_schema_hierarchy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_merge_target_with_hierarchy_no_match(
+    graph_ops, mock_neo4j, mock_embedding
+):
+    """Test hierarchy-aware merge target search when no match exists."""
+    mock_neo4j.vector_search = AsyncMock(return_value=[])
+    mock_neo4j.get_schema_ancestors = AsyncMock(return_value=[])
+    mock_neo4j.get_schema_with_entities = AsyncMock(
+        return_value={"schema": {"name": "Supplier"}, "entities": []}
+    )
+    result = await graph_ops.find_merge_target_with_hierarchy(
+        entity_name="Unique Entity",
+        schema_id="schema-1",
+        similarity_threshold=0.85,
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_find_merge_target_with_hierarchy_at_current_level(
+    graph_ops, mock_neo4j, mock_embedding
+):
+    """Test finding merge target at the current schema level."""
+    mock_neo4j.vector_search = AsyncMock(
+        return_value=[{"node": {"name": "Test Corp", "elementId": "entity-1"}, "score": 0.95}]
+    )
+    mock_neo4j.get_schema_with_entities = AsyncMock(
+        return_value={
+            "schema": {"name": "Supplier"},
+            "entities": [{"name": "Test Corp", "elementId": "entity-1"}],
+        }
+    )
+    result = await graph_ops.find_merge_target_with_hierarchy(
+        entity_name="Test Corp",
+        schema_id="schema-1",
+        similarity_threshold=0.85,
+    )
+    assert result is not None
+    assert result["entity"]["name"] == "Test Corp"
+    assert result["similarity"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_merge_entity_to_parent_schema(graph_ops, mock_neo4j):
+    """Test merging an entity to a parent schema."""
+    mock_neo4j._run_query = AsyncMock(return_value=[])
+    mock_neo4j.link_entity_to_schema = AsyncMock(return_value="new-link-1")
+    result = await graph_ops.merge_entity_to_parent_schema(
+        entity_id="entity-1",
+        parent_schema_id="parent-schema-1",
+    )
+    assert result == "new-link-1"
+    mock_neo4j.link_entity_to_schema.assert_called_once_with(
+        entity_id="entity-1", schema_id="parent-schema-1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_setup_vector_index(graph_ops, mock_neo4j):
     """Test setting up vector index."""
     await graph_ops.setup_vector_index(dimensions=768)

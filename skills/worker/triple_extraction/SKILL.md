@@ -1,6 +1,6 @@
 ---
 name: triple-extraction
-description: "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
+description: "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
 ---
 
 # Triple Extraction — Step 3c: Extract Entity-Relation-Entity Triples (Instance Layer)
@@ -49,7 +49,16 @@ You are a **Triple Extractor** (weak agent). Your task is to extract structured 
    - Each entity node must record `source_url` (the originating web page URL) and `source_text` (the exact evidence text slice) so it can be traced back to its source.
    - These come from the extraction phase's evidence records.
 
-7. **Save extracted triples** to `tmp/extracted_triples.md`:
+7. **Cross-validate triples across multiple sources**:
+   - After extracting triples, check whether the same triple is supported by multiple independent sources.
+   - Use `EvidenceStore.cross_validate()` to check consensus across sources.
+   - Use `EvidenceStore.is_well_supported()` to verify multi-source coverage.
+   - **Single-source triples**: Mark as "low confidence" — they need additional corroboration.
+   - **Conflicting triples**: If sources disagree on the same fact (e.g., different values for the same relation), mark as "needs human review".
+   - **Critical facts** (risk events, major changes, contractual relationships): Require 3+ independent sources. Mark as "needs more sources" if below threshold.
+   - Record the cross-validation result in the triple's metadata.
+
+8. **Save extracted triples** to `tmp/extracted_triples.md`:
 
    ```markdown
    ## Triple: [ID-001]
@@ -63,7 +72,7 @@ You are a **Triple Extractor** (weak agent). Your task is to extract structured 
    - **Confidence**: HIGH
    ```
 
-8. **Save evidence for each triple**:
+9. **Save evidence for each triple**:
    - Use `EvidenceStore.save_evidence()` with relation_id set
    - Each triple gets a unique relation_id
 

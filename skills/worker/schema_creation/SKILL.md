@@ -134,6 +134,16 @@ Format:
 }
 ```
 
+Schema inheritance is realized in the graph as **SUBCLASS_OF** relationships between Schema nodes:
+
+- **Graph representation**: When `Supplier` inherits from `Organization`, a `(Supplier)-[:SUBCLASS_OF]->(Organization)` relationship is created in Neo4j.
+- **Creation**: Use `GraphOps.create_schema_node()` with `parent_schema_id` to automatically create the SUBCLASS_OF relationship. Alternatively, use `Neo4jClient.create_schema_hierarchy()` directly.
+- **Querying ancestors**: Use `Neo4jClient.get_schema_ancestors(schema_id)` to traverse upward along SUBCLASS_OF edges.
+- **Querying descendants**: Use `Neo4jClient.get_schema_descendants(schema_id)` to traverse downward.
+- **Finding common ancestors**: Use `Neo4jClient.find_common_ancestor(schema_id_a, schema_id_b)` to find the nearest common parent.
+
+**Schema merging across inheritance**: When merging entities during graph persistence, the system checks not only the current Schema level but also ancestor Schema nodes. If two child schemas (e.g., "电子器件" and "工业器件") share the same relationship type (e.g., `-> 制造商`), the relationship can be promoted to their common ancestor (e.g., "器件" -> 制造商). This is handled by `GraphOps.find_merge_target_with_hierarchy()` and `GraphOps.merge_entity_to_parent_schema()`.
+
 ### Schema Constraints for Entity Extraction
 
 The Schema layer's `relationship_types` are used to **constrain Instance-level triple extraction**:

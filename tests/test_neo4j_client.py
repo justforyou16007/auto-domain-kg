@@ -246,6 +246,107 @@ async def test_execute_custom_query(client, mock_driver):
 
 
 @pytest.mark.asyncio
+async def test_create_schema_hierarchy(client, mock_driver):
+    """Test creating a SUBCLASS_OF relationship between schemas."""
+    result = await client.create_schema_hierarchy(
+        child_schema_id="schema-child",
+        parent_schema_id="schema-parent",
+    )
+    assert result == "test-id"
+    # Verify the query was called
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    assert "SUBCLASS_OF" in query
+    params = call_args[0][1]
+    assert params["child_id"] == "schema-child"
+    assert params["parent_id"] == "schema-parent"
+
+
+@pytest.mark.asyncio
+async def test_get_schema_ancestors(client, mock_driver):
+    """Test getting ancestor schema nodes."""
+    mock_driver.session.return_value.run.reset_mock()
+    # Override the mock to return ancestor data
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"ancestor": {"name": "Organization", "type": "entity"}}]
+    )
+    results = await client.get_schema_ancestors(schema_id="schema-1")
+    assert len(results) == 1
+    assert results[0]["name"] == "Organization"
+    # Verify query contains SUBCLASS_OF traversal
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    assert "SUBCLASS_OF" in query
+    assert "ancestor" in query
+
+
+@pytest.mark.asyncio
+async def test_get_schema_descendants(client, mock_driver):
+    """Test getting descendant schema nodes."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"descendant": {"name": "Supplier", "type": "entity"}}]
+    )
+    results = await client.get_schema_descendants(schema_id="schema-1")
+    assert len(results) == 1
+    assert results[0]["name"] == "Supplier"
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    assert "SUBCLASS_OF" in query
+    assert "descendant" in query
+
+
+@pytest.mark.asyncio
+async def test_find_common_ancestor(client, mock_driver):
+    """Test finding common ancestor of two schema nodes."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"common": {"name": "Organization", "type": "entity"}}]
+    )
+    result = await client.find_common_ancestor(
+        schema_id_a="schema-a", schema_id_b="schema-b"
+    )
+    assert result is not None
+    assert result["name"] == "Organization"
+    call_args = mock_driver.session.return_value.run.call_args
+    params = call_args[0][1]
+    assert params["id_a"] == "schema-a"
+    assert params["id_b"] == "schema-b"
+
+
+@pytest.mark.asyncio
+async def test_find_common_ancestor_none(client, mock_driver):
+    """Test finding common ancestor when none exists."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[]
+    )
+    result = await client.find_common_ancestor(
+        schema_id_a="schema-a", schema_id_b="schema-b"
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_schema_with_ancestors(client, mock_driver):
+    """Test getting schema with its ancestor chain."""
+    mock_driver.session.return_value.run.reset_mock()
+    # First call: get_schema_node
+    # Second call: get_schema_ancestors
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        side_effect=[
+            [{"s": {"name": "Supplier", "type": "entity"}}],  # get_schema_node
+            [{"ancestor": {"name": "Organization", "type": "entity"}}],  # ancestors
+        ]
+    )
+    result = await client.get_schema_with_ancestors(schema_id="schema-1")
+    assert result["schema"] is not None
+    assert result["schema"]["name"] == "Supplier"
+    assert len(result["ancestors"]) == 1
+    assert result["ancestors"][0]["name"] == "Organization"
+
+
+@pytest.mark.asyncio
 async def test_not_connected_raises_error():
     """Test that querying without connection raises an error."""
     with patch(
