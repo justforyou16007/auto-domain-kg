@@ -41,23 +41,23 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "schema_creation": {
         "name": "schema-creation",
-        "description": "Step 2 of KG construction (iterative). Research domain topics and generate schema definitions in iterations. Each iteration: search a sub-topic → create partial entity types and relationship types → merge results into tmp/schema_definition.json. Loop until no new schema types emerge or domain scope is exhausted.",
+        "description": "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Iterative discovery loop: search → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again.",
     },
     "entity_collection": {
         "name": "entity-collection",
-        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence is collected incrementally per iteration, saved to data/evidence/.",
+        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence serves the current iteration's Schema and Instance entities. Collectors must distinguish concepts from instances and capture source_url/source_text for provenance. Evidence is collected incrementally per iteration, saved to data/evidence/.",
     },
     "schema_refinement": {
         "name": "schema-refinement",
-        "description": "Part of iterative Step 2 of KG construction. After each iteration's entity collection, refine the partial schema based on collected evidence. Perform cross-iteration consistency checks: detect duplicate entity types, resolve relationship conflicts, ensure schema coherence.",
+        "description": "Part of iterative Step 2 of KG construction. After each iteration's entity collection, refine the partial schema based on collected evidence. Perform cross-iteration consistency checks: detect duplicate entity types, resolve relationship conflicts, ensure schema coherence, and check Schema/Instance layer separation (no concepts in Instance layer, no instances in Schema layer).",
     },
     "triple_extraction": {
         "name": "triple-extraction",
-        "description": "Extract entity-relation triples (subject, predicate, object) from collected news evidence. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
+        "description": "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
     },
     "graph_persistence": {
         "name": "graph-persistence",
-        "description": "Step 4 of KG construction. Persist schema, entities, and relationships to Neo4j. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability.",
+        "description": "Step 4 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability.",
     },
     "schema_audit": {
         "name": "schema-audit",

@@ -73,6 +73,8 @@ class GraphOps:
         name: str,
         properties: Optional[dict[str, Any]] = None,
         evidence: Optional[list[EvidenceRecord]] = None,
+        source_url: str = "",
+        source_text: str = "",
     ) -> str:
         """Create an entity node, link to schema, and auto-embed for vector search.
 
@@ -84,6 +86,11 @@ class GraphOps:
             name: Entity name.
             properties: Additional entity properties (may include 'description').
             evidence: Optional list of evidence records to save.
+            source_url: URL of the source document for provenance. Stored
+                directly on the entity node so it can be traced back to the
+                original source without needing to consult the evidence store.
+            source_text: Text snippet from the source document for provenance.
+                Stored directly on the entity node for traceability.
 
         Returns:
             Element ID of the created entity node.
@@ -96,6 +103,8 @@ class GraphOps:
             name=name,
             properties=props,
             labels=["Entity"],
+            source_url=source_url,
+            source_text=source_text,
         )
 
         # Link to schema
