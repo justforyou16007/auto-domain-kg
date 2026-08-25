@@ -233,6 +233,8 @@ class Neo4jClient:
         name: str,
         properties: Optional[dict[str, Any]] = None,
         labels: Optional[list[str]] = None,
+        source_url: str = "",
+        source_text: str = "",
     ) -> str:
         """Create an entity/instance node with optional labels.
 
@@ -240,19 +242,28 @@ class Neo4jClient:
             name: Entity name (stored in 'name' property).
             properties: Additional entity properties.
             labels: List of labels for the node. Defaults to ["Entity"].
+            source_url: URL of the source document for provenance.
+            source_text: Text snippet from the source document for provenance.
 
         Returns:
             The element ID of the created node.
         """
         entity_labels = labels or ["Entity"]
         label_str = ":".join(entity_labels)
+        merged_properties = dict(properties or {})
+        # Inject source fields into properties, but do NOT overwrite
+        # if the caller explicitly passed them as keyword arguments
+        if source_url:
+            merged_properties["source_url"] = source_url
+        if source_text:
+            merged_properties["source_text"] = source_text
         query = (
             f"CREATE (e:{label_str} {{name: $name, created_at: datetime()}}) "
             f"SET e = $properties "
             f"RETURN elementId(e) AS id"
         )
         results = await self._run_query(
-            query, {"name": name, "properties": properties or {}}
+            query, {"name": name, "properties": merged_properties}
         )
         return results[0]["id"] if results else ""
 

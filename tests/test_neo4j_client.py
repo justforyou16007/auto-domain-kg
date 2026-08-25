@@ -123,6 +123,69 @@ async def test_create_entity_node(client, mock_driver):
 
 
 @pytest.mark.asyncio
+async def test_create_entity_node_with_source(client, mock_driver):
+    """Test creating an entity node with source fields."""
+    result = await client.create_entity_node(
+        name="Test Corp",
+        properties={"description": "A test company"},
+        labels=["Entity"],
+        source_url="https://example.com/article",
+        source_text="Test Corp is a leading company in the industry.",
+    )
+    assert result == "test-id"
+    # Verify the query was called with source_url and source_text in properties
+    # session.run is called with positional args: (query, parameters)
+    call_args = mock_driver.session.return_value.run.call_args
+    params = call_args[0][1]  # second positional arg = parameters dict
+    props = params["properties"]
+    assert props["source_url"] == "https://example.com/article"
+    assert props["source_text"] == "Test Corp is a leading company in the industry."
+
+
+@pytest.mark.asyncio
+async def test_create_entity_node_source_precedence(client, mock_driver):
+    """Test that source_url/source_text params override properties dict values."""
+    # Reset mock call count
+    mock_driver.session.return_value.run.reset_mock()
+    result = await client.create_entity_node(
+        name="Test Corp",
+        properties={
+            "description": "A test company",
+            "source_url": "https://old-url.com",
+            "source_text": "Old text",
+        },
+        labels=["Entity"],
+        source_url="https://new-url.com/article",
+        source_text="New text with override.",
+    )
+    assert result == "test-id"
+    call_args = mock_driver.session.return_value.run.call_args
+    params = call_args[0][1]
+    props = params["properties"]
+    # The parameter values should override the properties dict values
+    assert props["source_url"] == "https://new-url.com/article"
+    assert props["source_text"] == "New text with override."
+    # Other properties should still be preserved
+    assert props["description"] == "A test company"
+
+
+@pytest.mark.asyncio
+async def test_create_entity_node_without_source(client, mock_driver):
+    """Test backward compatibility: creating entity without source fields."""
+    mock_driver.session.return_value.run.reset_mock()
+    result = await client.create_entity_node(
+        name="Test Corp",
+        properties={"description": "A test company"},
+    )
+    assert result == "test-id"
+    call_args = mock_driver.session.return_value.run.call_args
+    params = call_args[0][1]
+    props = params["properties"]
+    assert "source_url" not in props
+    assert "source_text" not in props
+
+
+@pytest.mark.asyncio
 async def test_create_relationship(client, mock_driver):
     """Test creating a relationship."""
     result = await client.create_relationship(

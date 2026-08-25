@@ -122,6 +122,50 @@ async def test_create_entity_node(graph_ops, mock_neo4j, mock_embedding):
 
 
 @pytest.mark.asyncio
+async def test_create_entity_node_with_source(graph_ops, mock_neo4j, mock_embedding):
+    """Test creating an entity node with source_url and source_text."""
+    result = await graph_ops.create_entity_node(
+        schema_id="schema-1",
+        name="Test Corp",
+        properties={"description": "A test company"},
+        source_url="https://example.com/article",
+        source_text="Test Corp is a leading company in the industry.",
+        evidence=[
+            EvidenceRecord(
+                entity_id="entity-1",
+                text_slice="Test Corp is a company.",
+                source_url="https://example.com",
+            )
+        ],
+    )
+    assert result == "entity-1"
+    # Verify source_url and source_text were passed through to neo4j client
+    call_kwargs = mock_neo4j.create_entity_node.call_args[1]
+    assert call_kwargs["source_url"] == "https://example.com/article"
+    assert call_kwargs["source_text"] == "Test Corp is a leading company in the industry."
+    # Verify other params still work
+    assert call_kwargs["name"] == "Test Corp"
+    mock_neo4j.link_entity_to_schema.assert_called_once_with("entity-1", "schema-1")
+    mock_embedding.embed.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_entity_node_without_source(graph_ops, mock_neo4j, mock_embedding):
+    """Test backward compatibility: creating entity without source fields."""
+    mock_neo4j.create_entity_node.reset_mock()
+    result = await graph_ops.create_entity_node(
+        schema_id="schema-1",
+        name="Test Corp",
+        properties={"description": "A test company"},
+    )
+    assert result == "entity-1"
+    call_kwargs = mock_neo4j.create_entity_node.call_args[1]
+    # source_url and source_text should default to empty string
+    assert call_kwargs.get("source_url") == ""
+    assert call_kwargs.get("source_text") == ""
+
+
+@pytest.mark.asyncio
 async def test_create_relationship(graph_ops, mock_neo4j):
     """Test creating a relationship with evidence."""
     result = await graph_ops.create_relationship(
