@@ -46,6 +46,17 @@ A **GAN-style multi-agent framework** for user-concern-driven domain schema gene
 | **Worker** | Claude Code CLI |
 | **Verifier** | Codex CLI |
 
+## Schema/Instance Layer Separation
+
+A core design principle of this project is the strict separation between a **Schema layer** and an **Instance layer**. The two layers play different roles and must never be mixed.
+
+- **Schema layer** — models **only** concept-level entity types and relationship types (e.g., "Storage Device", "Vehicle", "Supplier", "Raw Material"). It defines the ontology: what kinds of things exist and how they relate. It never contains concrete instance names.
+- **Instance layer** — models **only** concrete entities (e.g., "TSMC", "Xiaomi SU7", "Lithium Carbonate") that populate the ontology. Each Instance entity is linked to its Schema type via a `HAS_SCHEMA` relationship, and carries `source_url` / `source_text` provenance for traceability.
+
+**Relationship validation**: Instance-to-Instance relationships must be validated against Schema-to-Schema relationships. For example, if the Schema defines `Supplier` ―[`SUPPLIES`]→ `Material`, then the Instance triple `TSMC` ―[`SUPPLIES`]→ `Silicon Wafers` is valid. An Instance relationship with no matching Schema relationship is flagged as a **Schema extension needed**, and one that contradicts the Schema definition is flagged as a **Schema inconsistency**.
+
+**Schema hierarchy**: Schema types can form an inheritance hierarchy via `SUBCLASS_OF` relationships (e.g., `Supplier` is a subclass of `Organization`). When merging entities, the system can traverse this hierarchy and merge up to a parent Schema level.
+
 ## Installation
 
 ### Prerequisites
@@ -139,27 +150,35 @@ Extract user concerns through structured questioning. The agent asks about:
 **Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
 ### Step 2: Iterative Schema Generation & Entity Collection
-An iterative research-driven loop that combines schema generation, entity collection, and refinement:
-1. **Search**: Research a sub-topic or entity cluster within the domain (using web search)
-2. **Create Schema**: Based on search results, define partial entity types and relationship types. Merge into `tmp/schema_definition.json`.
-3. **Collect Evidence**: Spawn weak sub-agents to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/`.
-4. **Refine Schema**: Refine the partial schema based on the evidence just collected. Perform cross-iteration consistency checks.
-5. **Assess Coverage**: Evaluate whether the current iteration produced new types. If not, or if search results are outside the domain scope, terminate the loop.
-6. **Continue/Stop**: If new types were found, start the next iteration. Otherwise, proceed to Step 3.
+An iterative, research-driven discovery loop that combines schema generation, entity collection, and refinement. The `schema_creation` skill follows a 9-step iterative discovery flow:
+
+a. **Load user domain info** — read the user's domain and concerns from `CLAUDE.md`.
+b. **Search** — research a sub-topic or entity cluster using the web search API, focusing on concept types and business relationships.
+c. **Create Schema & relationships** — define Schema-level entity types and relationship types (concept-level only) and merge into `tmp/schema_definition.json`.
+d. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the search results as evidence.
+e. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
+f. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
+g. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
+h. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
+i. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
+
+Each iteration also collects evidence: weak sub-agents search for news/articles about the iteration's entities and save evidence to `data/evidence/` (2-3 independent sources per entity), then refine the partial schema with cross-iteration consistency checks.
 
 **Skills**: `skills/worker/schema_creation/SKILL.md`, `skills/worker/entity_collection/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`
 
 ### Step 3: Triple Extraction
-Weak sub-agents extract (entity, relation, entity) triples with evidence from the collected evidence.
+Weak sub-agents extract (entity, relation, entity) triples with evidence from the collected evidence. Extraction is guided by the Schema layer: only concrete Instance entities are extracted, and Instance relationships are validated against Schema-to-Schema relationships. Triples are cross-validated across multiple independent sources — single-source facts are marked as **low confidence**, conflicting facts are flagged for human review, and critical facts require 3+ independent sources.
 
 **Skill**: `skills/worker/triple_extraction/SKILL.md`
 
 ### Step 4: Graph Persistence
-Persist schema and instances to Neo4j:
-- Create schema nodes
-- Create entity nodes with auto-embedding
-- Create relationships
-- Link entities to schema via HAS_SCHEMA
+Persist the Schema (concept ontology) and Instance entities to Neo4j:
+- Create Schema nodes (concept-level info only)
+- Create entity nodes with auto-embedding, carrying `source_url` / `source_text` for provenance, and link them to Schema via `HAS_SCHEMA`
+- Create relationships, validating Instance relationships against the Schema before persisting
+- **Semantic merging** of Schema/Instance nodes: use GraphRAG (vector retrieval + multi-hop subgraph exploration) to find related nodes already in the graph and merge semantically similar ones (hierarchy-aware — can merge to a parent Schema level via `SUBCLASS_OF`)
+- **Completeness gap discovery**: analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, and generate new queries fed back to Step 2
+- Set up the vector index and verify embeddings / graph connectivity
 
 **Skill**: `skills/worker/graph_persistence/SKILL.md`
 
@@ -184,10 +203,11 @@ The worker automatically fixes issues. Loop continues until all audits pass.
 
 1. Load skill: `skills/updater/daily_update/SKILL.md`
 2. Scan for entity-related news (today's date)
-3. Determine if graph update is needed (schema or instance)
-4. Send news to worker agent for partial graph update
-5. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`
-6. Run verifier to validate the update
+3. **Cross-validate news from multiple sources** before updating — use multi-source cross-validation to confirm facts; discard or flag single-source / conflicting reports
+4. Determine if graph update is needed (schema or instance)
+5. Send news to worker agent for partial graph update. When new entities don't fit the current Schema level, use **hierarchy-aware Schema merging** — traverse `SUBCLASS_OF` to merge to a parent Schema level
+6. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`
+7. Run verifier to validate the update
 
 ## Risk Assessment Feature — 6-Step News-to-Graph Impact Analysis
 
@@ -227,19 +247,19 @@ If Entity A (a supplier) has a factory fire, the pipeline:
 ## Python Modules
 
 ### `neo4j_client.py`
-Neo4j connection management, schema/instance CRUD, vector index operations, and multi-hop Cypher queries. Supports both password auth and no-auth.
+Neo4j connection management, schema/instance CRUD, vector index operations, and multi-hop Cypher queries. Supports both password auth and no-auth. Entity nodes carry `source_url` and `source_text` fields for source provenance; `create_entity_node()` accepts these as optional parameters. Schema hierarchy is supported via `SUBCLASS_OF` relationships between Schema nodes: `create_schema_hierarchy()`, `get_schema_ancestors()`, `get_schema_descendants()`, `find_common_ancestor()`, `get_schema_with_ancestors()`.
 
 ### `embedding.py`
 External API embedding client (OpenAI-compatible / vLLM). Supports batch embedding, caching, and configurable endpoint/model/dimensions.
 
 ### `evidence_store.py`
-Evidence storage as JSONL files in `data/evidence/` with provenance tracking. Each record includes entity_id, text_slice, source_url, and timestamps.
+Evidence storage as JSONL files in `data/evidence/` with provenance tracking. Each record includes entity_id, text_slice, source_url, and timestamps. Multi-source cross-validation methods: `get_source_urls()` (all unique source URLs), `get_source_count()` (count independent sources), `cross_validate()` (check whether multiple sources agree or conflict), and `is_well_supported()` (check the minimum source count requirement).
 
 ### `news_adapter.py`
 Abstract `NewsAdapter` interface and `GoogleSearchNewsAdapter` implementation. Extensible — implement your own adapter by subclassing `NewsAdapter`.
 
 ### `graph_ops.py`
-High-level graph operations combining Neo4j, embedding, and evidence store. Provides composite operations like `create_entity_node()` (auto-embeds and links to schema).
+High-level graph operations combining Neo4j, embedding, and evidence store. Provides composite operations like `create_entity_node()` (auto-embeds and links to schema, accepts `source_url` / `source_text` for provenance). Hierarchy-aware merge operations: `find_merge_target_with_hierarchy()` (hierarchy-aware merge target finding, traversing `SUBCLASS_OF` upward) and `merge_entity_to_parent_schema()` (merge an entity to a parent Schema level).
 
 ### `risk_assessment.py`
 Risk field management, 6-step news-to-graph impact analysis pipeline, and agent-guided graph traversal. Methods: `extract_events_from_news()`, `associate_evidence()`, `graphrag_event_search()`, `trace_dag_impact()`, `generate_report()`, `run_full_analysis()`. Risk levels: NONE, LOW, MEDIUM, HIGH, CRITICAL.
@@ -341,7 +361,7 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files
-└── tests/                  # pytest tests (6 files)
+└── tests/                  # pytest tests (7 files)
 ```
 
 ## License

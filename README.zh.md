@@ -46,6 +46,17 @@
 | **Worker** | Claude Code CLI |
 | **Verifier** | Codex CLI |
 
+## Schema/Instance 层级分离
+
+本项目的核心设计原则之一是严格区分 **Schema 层**与 **Instance 层**。两者职责不同，不可混用。
+
+- **Schema 层** —— **仅**建模概念级的实体类型和关系类型（如 "Storage Device"、"Vehicle"、"Supplier"、"Raw Material"）。它定义本体：存在哪些类别的事物以及它们如何关联，绝不包含具体实例名称。
+- **Instance 层** —— **仅**建模具体实体（如 "TSMC"、"Xiaomi SU7"、"Lithium Carbonate"）来填充本体。每个 Instance 实体通过 `HAS_SCHEMA` 关系链接到其 Schema 类型，并携带 `source_url` / `source_text` 来源信息以便追溯。
+
+**关系校验**：Instance 到 Instance 的关系必须依据 Schema 到 Schema 的关系进行校验。例如，若 Schema 定义了 `Supplier` ―[`SUPPLIES`]→ `Material`，则 Instance 三元组 `TSMC` ―[`SUPPLIES`]→ `Silicon Wafers` 是合法的。没有匹配 Schema 关系的 Instance 关系会被标记为 **Schema extension needed**（需扩展 Schema），与 Schema 定义冲突的则标记为 **Schema inconsistency**（Schema 不一致）。
+
+**Schema 层级**：Schema 类型可以通过 `SUBCLASS_OF` 关系形成继承层级（如 `Supplier` 是 `Organization` 的子类）。合并实体时，系统可沿此层级向上追溯，合并到父级 Schema 层级。
+
 ## 安装
 
 ### 前置依赖
@@ -139,27 +150,35 @@ verifier_provider: codex/gpt-4o
 **技能文件**：`skills/worker/socratic_inquiry/SKILL.md`
 
 ### 第二步：迭代式模式生成与实体采集
-迭代式研究驱动循环，将模式生成、实体采集和修正整合在一起：
-1. **搜索**：研究领域内的子主题或实体簇（使用网络搜索）
-2. **创建模式**：基于搜索结果定义部分实体类型和关系类型，合并到 `tmp/schema_definition.json`
-3. **采集证据**：派遣弱智能体搜索本次迭代中实体的新闻/文章，保存证据到 `data/evidence/`
-4. **修正模式**：基于刚采集的证据修正部分模式，执行跨迭代的一致性检查
-5. **评估覆盖度**：判断当前迭代是否产生了新类型，如果没有，或搜索结果超出领域范围，则终止循环
-6. **继续/停止**：如果发现了新类型，开始下一次迭代；否则进入第三步
+迭代式研究驱动的发现循环，将模式生成、实体采集和修正整合在一起。`schema_creation` 技能遵循一个 9 步迭代发现流程：
+
+a. **加载用户领域信息** —— 从 `CLAUDE.md` 读取用户的领域与关注点。
+b. **搜索** —— 使用网络搜索 API 研究当前子主题或实体簇，重点关注概念类型与业务关系。
+c. **创建模式与关系** —— 定义 Schema 级实体类型和关系类型（仅概念级），合并到 `tmp/schema_definition.json`。
+d. **抽取实体与关系** —— 以搜索结果为证据，抽取匹配新 Schema 类型的具体 Instance 实体。
+e. **GraphRAG 检索** —— 对每个 Schema 类型和 Instance 实体，进行向量检索 + 多跳子图探索，查找图中已有的相关节点。
+f. **语义合并** —— 合并语义相似的 Schema/Instance 节点（如 "Xiaomi Auto" 与 "Xiaomi SU7" 可能指向同一实体），采用层级感知合并，可通过 `SUBCLASS_OF` 提升到父级 Schema。
+g. **持久化到图谱** —— 将当前批次的 Schema + Instance + Relationships 保存到 Neo4j。
+h. **发现完整性缺口** —— 分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新的探索查询。
+i. **重复** —— 用新查询从步骤 **b** 重新开始，直到搜索结果与发现的实体不再对用户领域相关的实体产生实质性影响。
+
+每次迭代同时会采集证据：弱智能体搜索本次迭代实体的新闻/文章并保存证据到 `data/evidence/`（每个实体需 2-3 个独立来源），然后基于证据修正部分模式并执行跨迭代一致性检查。
 
 **技能文件**：`skills/worker/schema_creation/SKILL.md`、`skills/worker/entity_collection/SKILL.md`、`skills/worker/schema_refinement/SKILL.md`
 
 ### 第三步：三元组抽取
-弱智能体从采集的证据中抽取（实体，关系，实体）三元组并附上证据。
+弱智能体从采集的证据中抽取（实体，关系，实体）三元组并附上证据。抽取由 Schema 层引导：仅抽取具体的 Instance 实体，并依据 Schema 到 Schema 的关系校验 Instance 关系。三元组在多个独立来源之间进行交叉验证——单一来源的事实被标记为**低置信度**，冲突的事实标记为需人工复核，关键事实要求 3 个以上独立来源。
 
 **技能文件**：`skills/worker/triple_extraction/SKILL.md`
 
 ### 第四步：图谱持久化
-将模式和实例持久化到 Neo4j：
-- 创建模式节点
-- 创建实体节点（自动生成向量嵌入）
-- 创建关系
-- 通过 HAS_SCHEMA 关系将实体链接到模式
+将 Schema（概念本体）和 Instance 实体持久化到 Neo4j：
+- 创建 Schema 节点（仅包含概念级信息）
+- 创建实体节点（自动生成向量嵌入），携带 `source_url` / `source_text` 来源信息，并通过 `HAS_SCHEMA` 链接到 Schema
+- 创建关系，持久化前依据 Schema 校验 Instance 关系
+- **Schema/Instance 节点的语义合并**：使用 GraphRAG（向量检索 + 多跳子图探索）查找图中已有的相关节点，合并语义相似的节点（层级感知——可通过 `SUBCLASS_OF` 合并到父级 Schema 层级）
+- **完整性缺口发现**：分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新查询反馈到第二步
+- 设置向量索引，验证嵌入与图连通性
 
 **技能文件**：`skills/worker/graph_persistence/SKILL.md`
 
@@ -184,10 +203,11 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 
 1. 加载技能文件：`skills/updater/daily_update/SKILL.md`
 2. 扫描与实体相关的最新新闻（当日日期）
-3. 判断是否需要更新图谱（模式或实例层面）
-4. 将新闻发送给 Worker 智能体进行局部图谱更新
-5. 当检测到风险事件时，通过 `RiskAssessment.run_full_analysis()` 触发完整的 6 步风险分析流程
-6. 运行 Verifier 验证更新结果
+3. **更新前对多源新闻进行交叉验证** —— 使用多源交叉验证确认事实，丢弃或标记单一来源/冲突的报告
+4. 判断是否需要更新图谱（模式或实例层面）
+5. 将新闻发送给 Worker 智能体进行局部图谱更新。当新实体不适合当前 Schema 层级时，使用**层级感知的 Schema 合并**——沿 `SUBCLASS_OF` 向上追溯，合并到父级 Schema 层级
+6. 当检测到风险事件时，通过 `RiskAssessment.run_full_analysis()` 触发完整的 6 步风险分析流程
+7. 运行 Verifier 验证更新结果
 
 ## 风险评估功能 — 6 步新闻→图谱影响分析
 
@@ -225,19 +245,19 @@ Worker 将自动修复发现的问题。循环持续进行，直至所有审计�
 ## Python 模块说明
 
 ### `neo4j_client.py`
-Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多跳 Cypher 查询。支持密码认证和无认证两种模式。
+Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多跳 Cypher 查询。支持密码认证和无认证两种模式。实体节点携带 `source_url` 和 `source_text` 字段用于来源追溯；`create_entity_node()` 可通过可选参数接收这些字段。通过 Schema 节点之间的 `SUBCLASS_OF` 关系支持 Schema 层级：`create_schema_hierarchy()`、`get_schema_ancestors()`、`get_schema_descendants()`、`find_common_ancestor()`、`get_schema_with_ancestors()`。
 
 ### `embedding.py`
 外部 API 的 Embedding 客户端（兼容 OpenAI / vLLM）。支持批量嵌入、缓存，以及可配置的端点、模型和维度。
 
 ### `evidence_store.py`
-证据存储模块，以 JSONL 文件形式保存在 `data/evidence/` 目录下，附带来源追踪信息。每条记录包含 entity_id、text_slice、source_url 和时间戳。
+证据存储模块，以 JSONL 文件形式保存在 `data/evidence/` 目录下，附带来源追踪信息。每条记录包含 entity_id、text_slice、source_url 和时间戳。多源交叉验证方法：`get_source_urls()`（获取所有唯一来源 URL）、`get_source_count()`（统计独立来源数量）、`cross_validate()`（检查多个来源是否一致或冲突）、`is_well_supported()`（检查是否满足最小来源数量要求）。
 
 ### `news_adapter.py`
 抽象 `NewsAdapter` 接口及 `GoogleSearchNewsAdapter` 实现。可扩展——通过继承 `NewsAdapter` 实现自定义适配器。
 
 ### `graph_ops.py`
-高层图谱操作，整合 Neo4j、Embedding 和证据存储。提供 `create_entity_node()` 等复合操作（自动生成嵌入并链接到模式）。
+高层图谱操作，整合 Neo4j、Embedding 和证据存储。提供 `create_entity_node()` 等复合操作（自动生成嵌入并链接到 Schema，可通过 `source_url` / `source_text` 参数接收来源信息）。层级感知合并操作：`find_merge_target_with_hierarchy()`（层级感知的合并目标查找，沿 `SUBCLASS_OF` 向上追溯）和 `merge_entity_to_parent_schema()`（将实体合并到父级 Schema 层级）。
 
 ### `risk_assessment.py`
 风险字段管理、6步新闻→图谱影响分析流程及智能体引导的图谱遍历。方法包括：`extract_events_from_news()`、`associate_evidence()`、`graphrag_event_search()`、`trace_dag_impact()`、`generate_report()`、`run_full_analysis()`。风险等级：NONE、LOW、MEDIUM、HIGH、CRITICAL。
@@ -339,7 +359,7 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件
-└── tests/                  # pytest 测试文件（6 个）
+└── tests/                  # pytest 测试文件（7 个）
 ```
 
 ## 许可证
