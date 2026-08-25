@@ -1,0 +1,59 @@
+# Audit Rubrics Configuration (Issues #14, #15)
+#
+# Default rubrics for the 5 verifier audit skills. All rubrics default to the
+# STRICTEST strictness level so that any error-level issue blocks an
+# adversarial round from passing. Edit thresholds here to customize auditing
+# without touching skill code.
+#
+# strictness_level: "strict" | "moderate" | "lenient"
+# enabled:          true | false  (set false to skip an audit skill)
+
+rubrics:
+  - name: schema_audit
+    description: >
+      Audit domain schema for completeness, consistency, inheritance, and no
+      redundancy.
+    strictness_level: strict
+    enabled: true
+    custom_thresholds:
+      max_missing_entity_types: 0
+      max_undefined_relationships: 0
+
+  - name: graph_structure_audit
+    description: >
+      Audit the knowledge graph structure for connectivity, orphan nodes,
+      relationship integrity, and graph health metrics.
+    strictness_level: strict
+    enabled: true
+    custom_thresholds:
+      max_orphan_entities: 0
+      min_avg_relationships: 1.0
+
+  - name: graphrag_validation
+    description: >
+      Validate graph quality by asking domain-driven GraphRAG questions and
+      checking the graph can answer them.
+    strictness_level: strict
+    enabled: true
+    custom_thresholds:
+      min_answerable_ratio: 0.8
+      min_precision: medium
+
+  - name: evidence_audit
+    description: >
+      Audit entity and relationship evidence for multi-source consistency,
+      quality, and provenance.
+    strictness_level: strict
+    enabled: true
+    custom_thresholds:
+      min_sources_per_entity: 2
+      min_sources_per_critical: 3
+
+  - name: task_relevance_audit
+    description: >
+      Evaluate whether the schema and graph instances remain relevant to the
+      user's original concerns.
+    strictness_level: strict
+    enabled: true
+    custom_thresholds:
+      min_fully_covered_ratio: 0.7

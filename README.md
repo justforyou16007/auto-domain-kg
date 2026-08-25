@@ -92,7 +92,7 @@ The installer will:
 ```bash
 # Create project structure
 mkdir -p src/auto_domain_kg skills/worker skills/verifier skills/updater skills/risk
-mkdir -p data/evidence tmp tests
+mkdir -p data/evidence tmp tests config reports/audits templates
 
 # Initialize Python project
 uv init --name "auto-domain-kg" --python ">=3.12"
@@ -182,15 +182,22 @@ Persist the Schema (concept ontology) and Instance entities to Neo4j:
 
 **Skill**: `skills/worker/graph_persistence/SKILL.md`
 
-### Step 5: Verifier Audit (Auto-Driven Loop)
-The verifier (Codex) audits the graph and drives fixes:
-1. **Schema Audit**: Completeness, consistency, inheritance, redundancy
-2. **Graph Structure Audit**: Connectivity, orphan nodes, density
-3. **GraphRAG Validation**: Can the graph answer domain questions?
-4. **Evidence Audit**: Multi-source consistency, quality
-5. **Task Relevance Audit**: Does the graph address user concerns?
+### Step 5: Verifier Audit (Adversarial Loop with Traceability)
+The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability. Defaults to the **strictest** auditing — any error-level issue blocks a round from passing.
 
-The worker automatically fixes issues. Loop continues until all audits pass.
+1. **Load rubrics** from `config/audit_rubrics.yaml` (strictest level; customize thresholds there without touching skill code)
+2. **Run all 5 audit sub-agents**, each applying its rubric thresholds:
+   - **Schema Audit**: completeness, consistency, inheritance, redundancy
+   - **Graph Structure Audit**: connectivity, orphan nodes, density
+   - **GraphRAG Validation**: can the graph answer domain questions?
+   - **Evidence Audit**: multi-source consistency, quality
+   - **Task Relevance Audit**: does the graph address user concerns?
+3. **Generate an audit report** via `AuditReportGenerator` (markdown + JSON), saved to `reports/audits/round_N/`
+4. **Append to `AuditHistory`** (`reports/audits/audit_history.jsonl`) for traceability
+5. **If error-level issues found**: send them to the worker, which fixes them and records what it changed (`fix_description`, `issue_ids_addressed`, `files_modified`)
+6. **Re-run the audit** (next round) and compare against the previous round — trace any issue across rounds with `AuditHistory.get_issue_trace(issue_id)` (first found → fixed → reappeared?)
+7. **Loop** until all audits pass or max rounds (default 5)
+8. **Final convergence summary** via `AuditHistory.get_summary()` (rounds, issues resolved, issues recurring, error/warning trend)
 
 **Skills**: `skills/verifier/schema_audit/SKILL.md`, `skills/verifier/graph_structure_audit/SKILL.md`, `skills/verifier/graphrag_validation/SKILL.md`, `skills/verifier/evidence_audit/SKILL.md`, `skills/verifier/task_relevance_audit/SKILL.md`
 
@@ -244,6 +251,51 @@ If Entity A (a supplier) has a factory fire, the pipeline:
 **Skill**: `skills/risk/risk_assessment/SKILL.md`
 **Python module**: `src/auto_domain_kg/risk_assessment.py`
 
+## Audit Report & Adversarial Traceability (Issues #14, #15)
+
+The verifier audit (Step 5) now produces detailed **audit reports** and runs a real **GAN-style adversarial loop** with full traceability. Audit strictness defaults to the **strictest** level so incomplete or unusable graphs are never accepted.
+
+### Audit Reports
+Each adversarial round generates a detailed audit report (markdown + JSON) describing all graph audit characteristics:
+- **Schema completeness stats** (entity types, missing types, undefined relationships)
+- **Graph connectivity metrics** (total entities, orphan entities, avg relationships per entity)
+- **Evidence source counts** (entities audited, single-source entities, conflicting evidence)
+- **GraphRAG question results** (total/answerable/unanswerable, per-question precision)
+- **Task relevance coverage** (fully/partially/not covered, fully-covered ratio)
+- **Issue breakdown** by severity (error/warning/info) and category, each with a stable issue `id`
+- **Worker fix traceability** (what the worker changed, which issue ids it addressed, which files)
+
+Reports are saved to `reports/audits/round_N/audit_report.md` (and `.json`). Render with:
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator
+md = generator.render_markdown(report)   # human-readable
+js = generator.render_json(report)        # machine consumption
+```
+A report template lives at `templates/audit_report_template.md`.
+
+### Custom Audit Rubrics
+Audit thresholds are user-customizable via `config/audit_rubrics.yaml` (all 5 audit skills, defaulting to strict):
+- `schema_audit`: `max_missing_entity_types=0`, `max_undefined_relationships=0`
+- `graph_structure_audit`: `max_orphan_entities=0`, `min_avg_relationships=1.0`
+- `graphrag_validation`: `min_answerable_ratio=0.8`, `min_precision="medium"`
+- `evidence_audit`: `min_sources_per_entity=2`, `min_sources_per_critical=3`
+- `task_relevance_audit`: `min_fully_covered_ratio=0.7`
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")  # or .load_default()
+config.set_strictness("strict")  # strict | moderate | lenient
+config.save_to_file("config/audit_rubrics.yaml")
+```
+
+### Adversarial Traceability
+Every round's audit report and the worker's fixes are persisted to `reports/audits/audit_history.jsonl` (JSONL). `AuditHistory` provides:
+- `get_round(n)` — retrieve a specific round
+- `get_issue_trace(issue_id)` — trace an issue across rounds (first found → fixed → reappeared)
+- `get_summary()` — total rounds, issues resolved, issues recurring, and the per-round convergence trend
+
+Under STRICT auditing, **any error-level issue blocks the round from passing**; warnings are tracked but do not block. The loop runs until all audits pass or the max rounds (default 5) is reached.
+
 ## Python Modules
 
 ### `neo4j_client.py`
@@ -263,6 +315,12 @@ High-level graph operations combining Neo4j, embedding, and evidence store. Prov
 
 ### `risk_assessment.py`
 Risk field management, 6-step news-to-graph impact analysis pipeline, and agent-guided graph traversal. Methods: `extract_events_from_news()`, `associate_evidence()`, `graphrag_event_search()`, `trace_dag_impact()`, `generate_report()`, `run_full_analysis()`. Risk levels: NONE, LOW, MEDIUM, HIGH, CRITICAL.
+
+### `audit_rubrics.py`
+User-customizable audit rubrics that drive the 5 verifier audit skills. `RubricItem` (name, description, strictness_level, enabled, custom_thresholds) and `RubricsConfig` (`load_default()`, `load_from_file()`, `save_to_file()`, `get_enabled_rubrics()`, `set_strictness()`). Defaults to the strictest level. Config file: `config/audit_rubrics.yaml`.
+
+### `audit_report.py`
+Audit report generation and adversarial traceability. `AuditReport` (full per-round audit state), `AuditReportGenerator` (`generate_report()`, `render_markdown()`, `render_json()`, `save_report()`), and `AuditHistory` (`add_round()`, `get_round()`, `get_all_rounds()`, `get_issue_trace()`, `get_summary()`). STRICT policy: any error-level issue blocks the round. History persisted as JSONL in `reports/audits/audit_history.jsonl`.
 
 ## Extending with New News Adapters
 
@@ -336,7 +394,9 @@ auto-domain-kg/
 │       ├── news_adapter.py
 │       ├── evidence_store.py
 │       ├── graph_ops.py
-│       └── risk_assessment.py
+│       ├── risk_assessment.py
+│       ├── audit_rubrics.py
+│       └── audit_report.py
 ├── skills/
 │   ├── worker/             # Worker skills (6 directories)
 │   │   ├── socratic_inquiry/SKILL.md
@@ -355,13 +415,17 @@ auto-domain-kg/
 │   │   └── daily_update/SKILL.md
 │   └── risk/               # Risk skills
 │       └── risk_assessment/SKILL.md
+├── config/                 # Audit rubrics configuration
+│   └── audit_rubrics.yaml
 ├── templates/              # Report templates
-│   └── default_domain_report_template.md
-├── reports/                # Generated risk reports
+│   ├── default_domain_report_template.md
+│   └── audit_report_template.md
+├── reports/                # Generated risk & audit reports
+│   └── audits/             # Audit reports + audit_history.jsonl
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files
-└── tests/                  # pytest tests (7 files)
+└── tests/                  # pytest tests (9 files)
 ```
 
 ## License

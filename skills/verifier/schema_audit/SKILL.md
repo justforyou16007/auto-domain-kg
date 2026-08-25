@@ -63,3 +63,37 @@ Report issues in a structured format:
 ### Action
 - If issues found, return the report to the main agent for fixing.
 - If no issues, confirm schema is valid.
+
+## Rubrics Integration (Issues #14, #15)
+
+### Load Rubrics
+Before auditing, load the strict rubrics that drive this skill:
+
+```python
+from auto_domain_kg.audit_rubrics import RubricsConfig
+
+# Load custom rubrics (default location), falling back to strict defaults.
+config = RubricsConfig.load_from_file("config/audit_rubrics.yaml")
+# or: config = RubricsConfig.load_default()
+```
+
+### Strict Thresholds (default strict)
+Apply these thresholds from the `schema_audit` rubric during the audit:
+- `max_missing_entity_types = 0` — any entity type referenced by instances but undefined in the schema is an **error**.
+- `max_undefined_relationships = 0` — any relationship type used without a schema definition is an **error**.
+
+Under STRICT auditing: **any error-level issue blocks the round from passing**. Warnings are tracked but do not block.
+
+### Structured Output for AuditReportGenerator
+Each issue MUST carry a stable `id` (e.g. `SCHEMA-001`), `severity` (`error`|`warning`|`info`), `category`, `description`, `location`, and `suggestion`. The `summary` block must report `total_entity_types`, `missing_entity_types`, `undefined_relationships`, `errors`, and `warnings`. This dict is consumed directly by `auto_domain_kg.audit_report.AuditReportGenerator.generate_report()`.
+
+### Report Generation
+After auditing, hand the structured result to the main agent, which calls:
+```python
+from auto_domain_kg.audit_report import AuditReportGenerator, AuditHistory
+generator = AuditReportGenerator()
+# report = generator.generate_report(round_number, sub_reports, config, worker_fixes)
+# generator.save_report(report, output_dir="reports/audits/")
+# AuditHistory("reports/audits/").add_round(report)
+```
+Each round's audit report (markdown + JSON) is saved to `reports/audits/round_N/` and appended to `reports/audits/audit_history.jsonl` for full adversarial traceability.
