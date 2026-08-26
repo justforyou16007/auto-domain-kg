@@ -119,6 +119,9 @@ uv run pytest
 | `EMBEDDING_API_KEY` | Embedding API 密钥 | `` |
 | `GOOGLE_API_KEY` | Google Custom Search API 密钥 | — |
 | `GOOGLE_CSE_ID` | Google Custom Search Engine ID | — |
+| `TRANSLATION_ENDPOINT` | OpenAI 兼容的翻译 API 端点（用于双语检索结果翻译） | `` |
+| `TRANSLATION_API_KEY` | 翻译 API 密钥（Bearer token） | `` |
+| `TRANSLATION_MODEL` | 翻译模型名称 | `gpt-4o-mini` |
 | `EVIDENCE_DIR` | 证据存储目录 | `data/evidence` |
 
 ### 模型提供商配置（CLAUDE.md）
@@ -140,29 +143,31 @@ verifier_provider: codex/gpt-4o
 ## 五步构建流程
 
 ### 第一步：苏格拉底式问询
-通过结构化提问提取用户关注点。智能体将询问以下内容：
-- **领域**：知识图谱服务于哪个行业/领域？
-- **实体**：关键实体类型及其属性
-- **关系**：实体之间的关联方式
-- **风险关注**：需要监控哪些风险
-- **更新频率**：多久扫描一次新数据
+通过**少量**高层问题（3-4 个核心问题）提取用户关注点。智能体将询问以下内容：
+- **领域**：知识图谱服务于哪个行业/领域？（必填）
+- **任务/目的**：主要任务是什么？（如风险监控、竞争情报）（必填）
+- **实体与关系类型（近似，可选）**：大致的实体类型和关系类型——用户可回答"不确定"
+- **风险关注（可选）**：需要监控哪些风险
+
+用户在 setup 阶段**无需**提供详细的 Schema、实体属性或继承层级。Schema 在第二步通过*探索*发现，而非在初始化时固定。如果用户对实体类型/关系不确定，仅凭领域和任务即可继续——探索循环会发现它们。
 
 **技能文件**：`skills/worker/socratic_inquiry/SKILL.md`
 
 ### 第二步：迭代式模式生成、实体采集与三元组抽取
-迭代式研究驱动的发现循环，将模式生成、实体采集、三元组抽取和修正整合在一起。`schema_creation` 技能遵循一个迭代发现流程：
+迭代式研究驱动的发现循环，将模式生成、实体采集、三元组抽取和修正整合在一起。**探索优先**：用户在第一步的输入是起点，而非完整规格——Schema 类型与关系通过*探索*发现，智能体会在用户提及范围之外广泛搜索（相邻领域、供应链上下游、相关行业）。`schema_creation` 技能遵循一个迭代发现流程：
 
-a. **加载用户领域信息** —— 从 `CLAUDE.md` 读取用户的领域与关注点。
-b. **搜索** —— 使用网络搜索 API 研究当前子主题或实体簇，重点关注概念类型与业务关系。
-c. **创建模式与关系** —— 定义 Schema 级实体类型和关系类型（仅概念级），合并到 `tmp/schema_definition.json`。
-d. **抽取三元组** —— 对探索过程中发现的每个实体/三元组子图，使用 Paseo MCP 的 `spawn_agent` 工具 dispatch sub-agent 进行并行探索。从采集的证据中抽取（实体，关系，实体）三元组，由 Schema 层引导。仅抽取具体的 Instance 实体。依据 Schema 到 Schema 的关系校验每个三元组的关系类型；标记需要 schema extension 的三元组。保存三元组到 `tmp/extracted_triples.md`。
-e. **采集证据** —— 弱智能体搜索本次迭代实体的新闻/文章并保存证据到 `data/evidence/`（每个实体需 2-3 个独立来源）。采集与抽取是一体的——证据直接用于三元组抽取。
-f. **抽取实体与关系** —— 以搜索结果为证据，抽取匹配新 Schema 类型的具体 Instance 实体。
-g. **GraphRAG 检索** —— 对每个 Schema 类型和 Instance 实体，进行向量检索 + 多跳子图探索，查找图中已有的相关节点。
-h. **语义合并** —— 合并语义相似的 Schema/Instance 节点（如 "Xiaomi Auto" 与 "Xiaomi SU7" 可能指向同一实体），采用层级感知合并，可通过 `SUBCLASS_OF` 提升到父级 Schema。
-i. **持久化到图谱** —— 将当前批次的 Schema + Instance + Relationships 保存到 Neo4j。
-j. **发现完整性缺口** —— 分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新的探索查询。
-k. **重复** —— 用新查询从步骤 **b** 重新开始，直到搜索结果与发现的实体不再对用户领域相关的实体产生实质性影响。
+a. **加载用户领域信息** —— 从 `CLAUDE.md` 读取用户的领域与关注点（将近似的实体/关系类型视为提示而非约束）。
+b. **双语检索** —— 对每个子主题，智能体**同时生成中文和英文查询**。使用 `bilingual_search()`（在 news adapter 上）替代 `search_news()`，使检索不受查询语种限制；按 URL 合并去重。广泛探索——不要将搜索局限于用户提及的内容。
+c. **翻译** —— 在继续之前，通过 `translate_content()` / `TranslationClient` 将所有双语检索结果翻译为工作语言（默认 `zh-CN`）。每个翻译后的条目携带 `original_language`。
+d. **创建模式与关系** —— 基于**翻译后**的搜索结果，定义 Schema 级实体类型和关系类型（仅概念级），合并到 `tmp/schema_definition.json`。让模式从数据中涌现。
+e. **抽取三元组** —— 对探索过程中发现的每个实体/三元组子图，使用 Paseo MCP 的 `spawn_agent` 工具 dispatch sub-agent 进行并行探索。从**翻译后**采集的证据中抽取（实体，关系，实体）三元组，由 Schema 层引导。仅抽取具体的 Instance 实体。依据 Schema 到 Schema 的关系校验每个三元组的关系类型；标记需要 schema extension 的三元组。保存三元组到 `tmp/extracted_triples.md`。
+f. **采集证据** —— 弱智能体使用 `bilingual_search()` + `translate_content()` 搜索本次迭代实体的新闻/文章并保存证据到 `data/evidence/`（每个实体需 2-3 个独立来源）。采集与抽取是一体的——证据直接用于三元组抽取。
+g. **抽取实体与关系** —— 以翻译后的搜索结果为证据，抽取匹配新 Schema 类型的具体 Instance 实体。
+h. **GraphRAG 检索** —— 对每个 Schema 类型和 Instance 实体，进行向量检索 + 多跳子图探索，查找图中已有的相关节点。
+i. **语义合并** —— 合并语义相似的 Schema/Instance 节点（如 "Xiaomi Auto" 与 "Xiaomi SU7" 可能指向同一实体），采用层级感知合并，可通过 `SUBCLASS_OF` 提升到父级 Schema。
+j. **持久化到图谱** —— 将当前批次的 Schema + Instance + Relationships 保存到 Neo4j。
+k. **发现完整性缺口** —— 分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新的探索查询。
+l. **重复** —— 用新查询从步骤 **b** 重新开始，直到搜索结果与发现的实体不再对用户领域相关的实体产生实质性影响。
 
 三元组在多个独立来源之间进行交叉验证——单一来源的事实被标记为**低置信度**，冲突的事实标记为需人工复核，关键事实要求 3 个以上独立来源。每次迭代后，基于证据和抽取的三元组修正部分模式并执行跨迭代一致性检查，将三元组抽取中标记为 `schema_extension_needed` 的缺失 schema 关系补充到模式中，确保 Schema、Schema-relation、entity、entity-relation 层对齐。
 

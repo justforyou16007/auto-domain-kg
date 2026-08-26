@@ -119,6 +119,9 @@ uv run pytest
 | `EMBEDDING_API_KEY` | Embedding API key | `` |
 | `GOOGLE_API_KEY` | Google Custom Search API key | — |
 | `GOOGLE_CSE_ID` | Google Custom Search Engine ID | — |
+| `TRANSLATION_ENDPOINT` | OpenAI-compatible translation API endpoint (for bilingual search result translation) | `` |
+| `TRANSLATION_API_KEY` | Translation API key (Bearer token) | `` |
+| `TRANSLATION_MODEL` | Translation model name | `gpt-4o-mini` |
 | `EVIDENCE_DIR` | Evidence storage directory | `data/evidence` |
 
 ### Provider Configuration (CLAUDE.md)
@@ -140,29 +143,31 @@ Format: `<cli>/<model-name>` where `cli` is `claude` or `codex`, and `model-name
 ## 5-Step Construction Flow
 
 ### Step 1: Socratic Inquiry
-Extract user concerns through structured questioning. The agent asks about:
-- **Domain**: What industry/domain is the KG for?
-- **Entities**: Key entity types and their properties
-- **Relationships**: How entities connect
-- **Risk concerns**: What risks to monitor
-- **Update frequency**: How often to scan for new data
+Extract user concerns through a **small number** of high-level questions (3-4 core questions). The agent asks about:
+- **Domain**: What industry/domain is the KG for? (required)
+- **Task/Purpose**: What is the primary task? (e.g., risk monitoring, competitive intelligence) (required)
+- **Entity & Relationship types (approximate, optional)**: approximate entity types and relationship types — the user may say "not sure"
+- **Risk concerns (optional)**: what risks to monitor
+
+The user does **NOT** need to provide a detailed Schema, entity properties, or inheritance hierarchies at setup time. Schema is *discovered* through exploration in Step 2. If the user is unsure about entity types/relationships, proceed with just the domain and task — the exploration loop will discover them.
 
 **Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
 ### Step 2: Iterative Schema Generation, Entity Collection & Triple Extraction
-An iterative, research-driven discovery loop that combines schema generation, entity collection, triple extraction, and refinement. The `schema_creation` skill follows an iterative discovery flow:
+An iterative, research-driven discovery loop that combines schema generation, entity collection, triple extraction, and refinement. **Exploration-first**: the user's Step 1 input is a starting point, not a complete specification — Schema types and relationships are *discovered* through exploration, and the agent searches broadly beyond what the user mentioned (adjacent domains, supply-chain上下游, related industries). The `schema_creation` skill follows an iterative discovery flow:
 
-a. **Load user domain info** — read the user's domain and concerns from `CLAUDE.md`.
-b. **Search** — research a sub-topic or entity cluster using the web search API, focusing on concept types and business relationships.
-c. **Create Schema & relationships** — define Schema-level entity types and relationship types (concept-level only) and merge into `tmp/schema_definition.json`.
-d. **Extract Triples** — for each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from collected evidence, guided by the Schema layer. Only extract concrete Instance entities. Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`.
-e. **Collect evidence** — weak sub-agents search for news/articles about the iteration's entities and save evidence to `data/evidence/` (2-3 independent sources per entity). Collection and extraction are integrated — evidence feeds directly into triple extraction.
-f. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the search results as evidence.
-g. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
-h. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
-i. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
-j. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
-k. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
+a. **Load user domain info** — read the user's domain and concerns from `CLAUDE.md` (treat approximate entity/relationship types as hints, not constraints).
+b. **Bilingual search** — for each sub-topic, the agent generates BOTH a Chinese and an English query. Use `bilingual_search()` (on the news adapter) instead of `search_news()` so retrieval is not limited by the search language; merge and deduplicate results by URL. Explore broadly — do not restrict the search to what the user mentioned.
+c. **Translate** — translate all bilingual search results to the working language (default `zh-CN`) via `translate_content()` / `TranslationClient` before proceeding. Each translated item carries `original_language`.
+d. **Create Schema & relationships** — based on the **translated** search results, define Schema-level entity types and relationship types (concept-level only) and merge into `tmp/schema_definition.json`. Let the schema emerge from the data.
+e. **Extract Triples** — for each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the **translated** collected evidence, guided by the Schema layer. Only extract concrete Instance entities. Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`.
+f. **Collect evidence** — weak sub-agents search for news/articles about the iteration's entities using `bilingual_search()` + `translate_content()`, and save evidence to `data/evidence/` (2-3 independent sources per entity). Collection and extraction are integrated — evidence feeds directly into triple extraction.
+g. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the translated search results as evidence.
+h. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
+i. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
+j. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
+k. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
+l. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
 
 Triples are cross-validated across multiple independent sources — single-source facts are marked as **low confidence**, conflicting facts are flagged for human review, and critical facts require 3+ independent sources. After each iteration, refine the partial schema with cross-iteration consistency checks, and add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
 

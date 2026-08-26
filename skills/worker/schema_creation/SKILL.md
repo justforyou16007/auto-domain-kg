@@ -1,12 +1,30 @@
 ---
 name: schema-creation
-description: "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Iterative discovery loop: search → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again."
+description: "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology through an exploration-first discovery process. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Bilingual (zh+en) queries are searched and results translated before schema/entity exploration. Iterative discovery loop: bilingual search → translate → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again."
 ---
 
 # Schema Creation — Step 2: Iterative Domain Schema Generation (Concept Ontology)
 
 ## Goal
 Iteratively research domain topics and generate a **Schema-layer concept ontology** through multiple search-and-create cycles. The Schema layer models **only** conceptual entity types (e.g., "Storage Device", "Vehicle", "Supplier", "Raw Material") — never concrete instance names (e.g., "Xiaomi SU7", "Sigma Lens"). Schema relationships must have explicit business meaning (e.g., `PRODUCES`, `SUPPLIES`, `PART_OF`) — never meaningless associations.
+
+## Exploration-First Principle
+
+> The user's initial input (from Step 1) is a **STARTING POINT**, not a complete specification. Schema types and relationships are **DISCOVERED** through iterative exploration, not generated from a fixed spec.
+
+- The agent should **proactively search beyond** the user's initial entity list to discover related concepts the user did not mention.
+- The agent should **NOT limit itself** to what the user mentioned — explore adjacent domains, supply-chain上下游 (upstream/downstream), and related industries.
+- When the user provides approximate entity types, **treat them as hints, not constraints**. Search broadly within the domain and let the schema emerge from the data.
+- If the user said "not sure" about entity/relationship types in Step 1, that is expected — discover them here through broad exploration.
+
+## Bilingual Search + Translation (Issue #25)
+
+Retrieval completeness must not be limited by the search query's language. Before exploring Schema and entities:
+
+1. **Generate bilingual queries** — for each sub-topic, the agent generates BOTH a Chinese query and an English query.
+2. **Run `bilingual_search()`** (on `NewsAdapter` / `GoogleSearchNewsAdapter`) instead of `search_news()`. It issues searches for both language queries, merges the results, and deduplicates by URL.
+3. **Translate all results** to the working language (default `zh-CN`) via `translate_content()` / `TranslationClient` before proceeding. Each translated `NewsItem` carries `original_language` and a normalized `language` field.
+4. Only after this unified, translated corpus is ready does Schema and entity exploration begin.
 
 ## Schema Layer vs Instance Layer
 
@@ -26,23 +44,24 @@ You are the **Schema Architect** (strong agent). Your task is to design a **conc
 
 ### Input
 - User concerns from `CLAUDE.md` (User Concerns section)
-- Domain, entities, relationships identified in Step 1
+- Domain, entities, relationships identified in Step 1 — treat as **hints/starting points**, not constraints
 - Existing graph structure (previous iteration's Schema + Instance nodes)
 
 ### Iterative Discovery Process
 
 The full iteration cycle is:
 
-**a. Load User Concerns** — Read the user's domain and existing information from `CLAUDE.md` (User Concerns section).
+**a. Load User Concerns** — Read the user's domain and existing information from `CLAUDE.md` (User Concerns section). Remember the user's entity/relationship types are approximate hints — explore broadly beyond them.
 
-**b. Search** — Use the web search API to research the current sub-topic. Focus on understanding the **concept types** and **business relationships** in the domain.
+**b. Bilingual Search** — Use `bilingual_search()` (not `search_news()`) on the `NewsAdapter` to research the current sub-topic. The agent generates BOTH a Chinese and an English query for each sub-topic/entity so retrieval is not limited by language. **Explore broadly** — do not restrict the search to what the user mentioned; proactively search adjacent domains, supply-chain上下游, and related industries to discover concepts the user did not name. Merge and deduplicate the bilingual results by URL, then `translate_content()` all results to the working language before proceeding.
 
-**c. Create Schema & Relationships** — Based on search results, define Schema-level entity types and relationship types:
+**c. Create Schema & Relationships** — Based on the **translated** search results, define Schema-level entity types and relationship types:
 - Entity types must be **concept-level** (e.g., "Storage Device", not "Samsung 990 Pro")
 - Relationship types must have **explicit business semantics** (e.g., `PRODUCES`, `SUPPLIES`, `PART_OF`, `LOCATED_IN`)
+- Let the schema **emerge from the data** — add types discovered through broad exploration, not only those the user mentioned
 - Append new types to `tmp/schema_definition.json` (merge with existing, deduplicate by name)
 
-**d. Extract Triples** — For each entity/triple sub-graph discovered during the exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the search evidence, guided by the Schema layer just created. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
+**d. Extract Triples** — For each entity/triple sub-graph discovered during the exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the **translated** search evidence, guided by the Schema layer just created. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
 
 **e. Collect Evidence** — Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files (2-3 independent sources per entity). Use the `entity_collection` skill for this sub-step.
 
