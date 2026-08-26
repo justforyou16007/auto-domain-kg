@@ -1,105 +1,127 @@
 ---
 name: triple-extraction
-description: "Part of Step 2 iterative loop. Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
+description: "Step 4b of the KG pipeline (per Schema/Relation dimension). From the Schema/Relation's leaf entities, explore outward X-hop (default 3) and extract entities and relations along Schema-defined Relation directions. Form a subgraph centered on the leaf entity; each entity and relation carries an evidence slice + source_url. Validate entity-relation against schema-relation alignment and flag triples needing schema extension. X is configurable (default 3) — X-hop exploration is performed explicitly. Only extract concrete Instance entities (never concepts)."
 ---
 
-# Triple Extraction — Part of Step 2 Iterative Loop: Extract Entity-Relation-Entity Triples (Instance Layer)
+# Triple Extraction — Step 4b: Per-Schema/Relation X-Hop Subgraph Extraction
 
 ## Goal
-Extract (entity, relation, entity) triples with evidence slices from collected news articles. Extraction is **guided by the Schema layer**: it only extracts concrete **Instance-level** entities, and validates entity relationships against the Schema's relationship types.
+For a **single Schema/Relation dimension** assigned to this sub-agent, explore
+outward **X-hop** (default **3**) from the Schema/Relation's leaf entities and
+extract (entity, relation, entity) triples along the Schema-defined Relation
+directions. Form a subgraph centered on each leaf entity where every node and
+edge carries an evidence slice + `source_url`. Validate each triple against
+schema-relation alignment and flag triples that need schema extension.
 
-## Weak Agent Instructions
+## Input
+- The assigned Schema/Relation dimension (entity types + relationship types
+  from `tmp/schema_definition.json`).
+- The leaf entities for this dimension (concrete Instance entities discovered
+  during evidence search).
+- Evidence from `data/evidence/` (loaded via `EvidenceStore`).
+- User concerns from `CLAUDE.md`.
+- **X** — the hop depth (default **3**, configurable per dispatch).
 
-You are a **Triple Extractor** (weak agent). Your task is to extract structured triples from the collected evidence, guided by the Schema constraints.
+## Sub-Agent Instructions
 
-### Input
-- Schema from `tmp/schema_definition.json` (concept-level entity types + relationship types)
-- Evidence from `data/evidence/` (loaded via `EvidenceStore`)
-- User concerns from `CLAUDE.md`
+You are a **Triple Extractor** sub-agent scoped to one Schema/Relation
+dimension. Your scope is X-hop exploration + triple extraction + validation —
+NOT Schema creation, NOT merging across sources (that is
+`entity_relation_merge`, Step 4c).
 
 ### Process
 
-1. **Load the Schema** from `tmp/schema_definition.json`.
-2. **Load evidence** from `data/evidence/` using the `EvidenceStore`.
-3. **For each evidence record**, extract triples:
+#### 1. Load the Schema/Relation Dimension
+- Load the assigned entity types and relationship types from
+  `tmp/schema_definition.json`.
+- Identify the **leaf entities** for this dimension (concrete Instance
+  entities at the leaves of the `SUBCLASS_OF` hierarchy).
 
-   ```
-   (Entity A) --[RELATIONSHIP]--> (Entity B)
-   ```
+#### 2. X-Hop Exploration (default 3)
+- From each leaf entity, explore outward **X-hop** (default 3 hops).
+- At each hop, follow the Schema-defined Relation directions — only traverse
+  relationships that the Schema declares between the relevant entity types.
+- Collect the evidence encountered along each hop so every discovered entity
+  and relation is tied to a source.
 
-   Example:
-   ```
-   (TSMC) --[SUPPLIES]--> (iPhone Processors)
-   Evidence: "Apple contracts with TSMC to manufacture iPhone processors"
-   ```
+#### 3. Extract Triples
+- Along the X-hop traversal, extract triples:
 
-4. **Map entities to Schema types**:
-   - Each concrete Instance entity must map to exactly one Schema entity type.
-   - Only extract **concrete instances** (e.g., "TSMC", "Xiaomi SU7", "Sigma 50mm F1.4"). Do NOT extract concept names (e.g., "chip manufacturer", "car") as entities.
-   - If an entity is a concept rather than an instance, skip it (or record it for the Schema layer).
+  ```
+  (Entity A) --[RELATIONSHIP]--> (Entity B)
+  ```
 
-5. **Validate triples against Schema relationships**:
-   - Check whether the two entities' Schema types have a defined relationship between them.
-   - **Valid**: Schema A and Schema B have a defined relationship type, and the Instance A→Instance B relationship uses that type.
-     - Example: `Supplier` ―[`SUPPLIES`]→ `Material` exists in Schema, so `TSMC` ―[`SUPPLIES`]→ `Silicon Wafers` is valid.
-   - **Schema inconsistency**: Schema A and Schema B have a relationship type, but the Instance relationship uses a different/wrong type. Mark it and flag.
-   - **Schema extension needed**: Instance A and Instance B have a genuine relationship, but Schema A and Schema B have NO defined relationship. Mark it as a Schema extension requirement.
+  Example:
+  ```
+  (TSMC) --[SUPPLIES]--> (Silicon Wafers)
+  Evidence: "Apple contracts with TSMC to manufacture iPhone processors"
+  ```
 
-6. **Record source_url and source_text for every entity**:
-   - Each entity node must record `source_url` (the originating web page URL) and `source_text` (the exact evidence text slice) so it can be traced back to its source.
-   - These come from the extraction phase's evidence records.
+- Only extract **concrete Instance entities** (e.g., "TSMC", "Xiaomi SU7").
+  Do NOT extract concept names (e.g., "chip manufacturer") as entities —
+  those belong to the Schema layer.
 
-7. **Cross-validate triples across multiple sources**:
-   - After extracting triples, check whether the same triple is supported by multiple independent sources.
-   - Use `EvidenceStore.cross_validate()` to check consensus across sources.
-   - Use `EvidenceStore.is_well_supported()` to verify multi-source coverage.
-   - **Single-source triples**: Mark as "low confidence" — they need additional corroboration.
-   - **Conflicting triples**: If sources disagree on the same fact (e.g., different values for the same relation), mark as "needs human review".
-   - **Critical facts** (risk events, major changes, contractual relationships): Require 3+ independent sources. Mark as "needs more sources" if below threshold.
-   - Record the cross-validation result in the triple's metadata.
+#### 4. Form a Subgraph per Leaf Entity
+- Center the subgraph on each leaf entity.
+- Every node (entity) in the subgraph carries:
+  - `source_url` — the originating web page URL.
+  - `source_text` — the exact evidence text slice.
+  - Its Schema type mapping.
+- Every edge (relation) carries its evidence slice + `source_url`.
 
-8. **Save extracted triples** to `tmp/extracted_triples.md`:
+#### 5. Map Entities to Schema Types
+- Each concrete Instance entity must map to exactly one Schema entity type.
+- If an entity is a concept rather than an instance, skip it (or record it for
+  the Schema layer).
 
-   ```markdown
-   ## Triple: [ID-001]
-   - **Subject**: TSMC (entity_type: Supplier, schema: Supplier)
-   - **Relation**: SUPPLIES
-   - **Object**: Silicon Wafers (entity_type: Material, schema: Material)
-   - **Evidence**: "Apple contracts with TSMC to manufacture iPhone processors"
-   - **Source**: https://example.com/news/1
-   - **Source URL**: https://example.com/news/1
-   - **Source Text**: "Apple contracts with TSMC to manufacture iPhone processors"
-   - **Confidence**: HIGH
-   ```
+#### 6. Validate Against Schema-Relation Alignment
+- **Valid**: Schema A and Schema B have a defined relationship type, and the
+  Instance A→Instance B relationship uses that type.
+- **Schema inconsistency**: Schema A and Schema B have a relationship type,
+  but the Instance relationship uses a different/wrong type. Mark and flag.
+- **Schema extension needed**: Instance A and Instance B have a genuine
+  relationship, but Schema A and Schema B have NO defined relationship. Flag
+  it as a Schema extension requirement (do NOT silently drop it).
 
-9. **Save evidence for each triple**:
-   - Use `EvidenceStore.save_evidence()` with relation_id set
-   - Each triple gets a unique relation_id
+#### 7. Cross-Validate Triples Across Multiple Sources
+- Use `EvidenceStore.cross_validate()` to check consensus across sources.
+- Use `EvidenceStore.is_well_supported()` to verify multi-source coverage.
+- **Single-source triples**: mark as "low confidence".
+- **Conflicting triples**: mark as "needs human review".
+- **Critical facts** (risk events, major changes, contractual relationships):
+  require 3+ independent sources.
+- Record the cross-validation result in each triple's metadata.
+
+#### 8. Save Extracted Triples
+- Append triples to `tmp/extracted_triples.md`:
+
+  ```markdown
+  ## Triple: [ID-001]
+  - **Subject**: TSMC (entity_type: Supplier, schema: Supplier)
+  - **Relation**: SUPPLIES
+  - **Object**: Silicon Wafers (entity_type: Material, schema: Material)
+  - **Hop**: 1 (distance from leaf entity Xiaomi SU7)
+  - **Evidence**: "Apple contracts with TSMC to manufacture iPhone processors"
+  - **Source URL**: https://example.com/news/1
+  - **Source Text**: "Apple contracts with TSMC to manufacture iPhone processors"
+  - **Confidence**: HIGH
+  ```
+
+- Use `EvidenceStore.save_evidence()` with a unique `relation_id` per triple.
 
 ### Extraction Guidelines
-- **Prefer explicit statements** over inferred relationships
-- **Include exact text** from the source as evidence
-- **Confidence levels**: HIGH (explicitly stated), MEDIUM (strongly implied), LOW (weakly inferred)
-- **One triple per row** — do not combine multiple relationships
-- **Entity names** should be specific concrete instances (never concept names)
-- **Integer with Schema**: Every entity belongs to a defined Schema type
-- **Source provenance**: Record `source_url` and `source_text` for every entity
-- **Date context**: Include publication date if relevant
+- **Prefer explicit statements** over inferred relationships.
+- **Include exact text** from the source as evidence.
+- **Confidence levels**: HIGH (explicitly stated), MEDIUM (strongly implied),
+  LOW (weakly inferred).
+- **One triple per row** — do not combine multiple relationships.
+- **Entity names** should be specific concrete instances (never concept names).
+- **X-hop is explicit**: every triple records its hop distance from the leaf
+  entity so the subgraph structure is traceable.
+- **Source provenance**: record `source_url` and `source_text` for every entity
+  and relation.
 
-### Schema Consistency & Completeness Checks
-- **Missing connections**: Note if an entity would logically connect to others but no relationship evidence was found. Mark the missing connection for completeness exploration.
-- **Schema extension needs**: If an Instance relationship has no matching Schema relationship, record it as a Schema extension requirement (do NOT silently drop it).
-- **Schema inconsistency**: If an Instance relationship violates a Schema constraint, flag it as schema inconsistency.
-
-### Completeness Awareness
-When extracting, pay attention to whether the entity relationships are complete:
-- Are there entities mentioned in the evidence that should be connected but have no relationship?
-- Are there relationship types in the Schema that no instance uses yet?
-- Report these gaps for the completeness exploration step.
-
-### Quality Checks
-- Skip triples with vague or ambiguous entities
-- Flag contradictory triples from different sources
-- Note if a triple is time-sensitive (e.g., "CEO of Company X as of 2024")
-- Every entity must have a valid Schema type mapping
-- Every entity must have source_url and source_text
+### Output
+- `tmp/extracted_triples.md` — triples for this Schema/Relation dimension,
+  each with hop distance, evidence slice, and `source_url`.
+- Flagged `schema_extension_needed` triples reported for Schema reconciliation.

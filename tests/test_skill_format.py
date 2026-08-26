@@ -16,14 +16,16 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 
-# All 13 skills with their expected directory paths
+# All 15 skills with their expected directory paths
 EXPECTED_SKILL_DIRS = [
     "worker/socratic_inquiry",
+    "worker/kg_gen_pipeline",
     "worker/schema_creation",
-    "worker/entity_collection",
-    "worker/schema_refinement",
+    "worker/schema_merge",
+    "worker/evidence_search",
     "worker/triple_extraction",
-    "worker/graph_persistence",
+    "worker/entity_relation_merge",
+    "worker/subgraph_merge",
     "verifier/schema_audit",
     "verifier/graph_structure_audit",
     "verifier/graphrag_validation",
@@ -41,23 +43,31 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "schema_creation": {
         "name": "schema-creation",
-        "description": "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology through an exploration-first discovery process. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Bilingual (zh+en) queries are searched and results translated before schema/entity exploration. Iterative discovery loop: bilingual search → translate → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again.",
+        "description": "Step 2 of the KG pipeline (parallel proposal). GraphRAG search existing Neo4j Schema (vector search + multi-hop) to find related Schema, then based on search results + model's own domain knowledge create concept-level Schema entity types and relationship types. Schema only models concept-level types — never concrete instance names. Schema relationships must have explicit business semantics. Bilingual (zh+en) queries are searched and results translated before schema creation. Cache the proposal locally (tmp/schema_proposals/agent_N.json) and notify the main Agent. ONLY creates Schema + Relations — no entity collection, triple extraction, refinement, or persistence.",
     },
-    "entity_collection": {
-        "name": "entity-collection",
-        "description": "Part of iterative Step 2 of KG construction. During each schema iteration, search for entity-related news and articles, collecting evidence with source URLs. Evidence serves the current iteration's Schema and Instance entities. Collectors must distinguish concepts from instances and capture source_url/source_text for provenance. Evidence is collected incrementally per iteration, saved to data/evidence/. Each entity must be supported by 2-3 independent sources for cross-validation.",
+    "schema_merge": {
+        "name": "schema-merge",
+        "description": "Step 3 of the KG pipeline. Merge multiple Schema proposals (from Step 2's N parallel sub-agents) with existing Neo4j Schema into one global Schema. Maintain the SUBCLASS_OF hierarchy (e.g. Car → EV → Xiaomi Auto). Detect duplicates, resolve conflicts, ensure a concept-level-only ontology. Uses neo4j_client.create_schema_hierarchy(), get_schema_ancestors(), find_common_ancestor(). Output merged global Schema to tmp/schema_definition.json.",
     },
-    "schema_refinement": {
-        "name": "schema-refinement",
-        "description": "Part of iterative Step 2 of KG construction. After each iteration's entity collection, refine the partial schema based on collected evidence. Perform cross-iteration consistency checks: detect duplicate entity types, resolve relationship conflicts, ensure schema coherence, and check Schema/Instance layer separation (no concepts in Instance layer, no instances in Schema layer).",
+    "evidence_search": {
+        "name": "evidence-search",
+        "description": "Step 4a of the KG pipeline. Deep-research-style evidence search. Multi-round iterative: each round generates zh+en queries → bilingual_search() top-k=20 → merge by URL → translate_content() to zh-CN → analyze findings → generate next-round questions → continue. Does NOT stop after finding one piece of evidence — goal is comprehensive coverage. Stop when a round produces no new facts. Uses news_adapter.bilingual_search() and translation.TranslationClient.translate_content(). Saves evidence to data/evidence/.",
     },
     "triple_extraction": {
         "name": "triple-extraction",
-        "description": "Part of Step 2 iterative loop. Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
+        "description": "Step 4b of the KG pipeline (per Schema/Relation dimension). From the Schema/Relation's leaf entities, explore outward X-hop (default 3) and extract entities and relations along Schema-defined Relation directions. Form a subgraph centered on the leaf entity; each entity and relation carries an evidence slice + source_url. Validate entity-relation against schema-relation alignment and flag triples needing schema extension. X is configurable (default 3) — X-hop exploration is performed explicitly. Only extract concrete Instance entities (never concepts).",
     },
-    "graph_persistence": {
-        "name": "graph-persistence",
-        "description": "Step 3 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability.",
+    "entity_relation_merge": {
+        "name": "entity-relation-merge",
+        "description": "Step 4c of the KG pipeline. Entity alignment and subgraph merging across sources. Semantic judgment identifies the same entity across sources (e.g. 苹果 ↔ Apple). Merge subgraphs. Bind entities to Schema nodes via HAS_SCHEMA. Mark entities with no matching Schema as empty Schema for later Schema creation. Uses graph_ops.find_merge_target_with_hierarchy() and merge_entity_to_parent_schema().",
+    },
+    "subgraph_merge": {
+        "name": "subgraph-merge",
+        "description": "Step 5 of the KG pipeline. Take the Neo4j intersection 2-hop subgraph of newly inserted entities and merge overlapping subgraphs. For entities with empty Schema, create new Schema nodes and route through schema-merge. For new Schema, trigger Step 4 recursively. Stop condition: new search entities are completely irrelevant to user's domain concerns (no butterfly effect — only direct domain relevance counts). Uses graph_ops.multi_hop_subgraph() and vector_search().",
+    },
+    "kg_gen_pipeline": {
+        "name": "kg-gen-pipeline",
+        "description": "Main orchestration skill for the 6-step deep-research multi-agent KG construction pipeline. Uses Paseo MCP spawn_agent to dispatch parallel sub-agents at each phase: Step 1 Socratic Inquiry, Step 2 parallel schema_creation sub-agents, Step 3 schema-merge, Step 4 per-Schema evidence-search + triple_extraction + entity-relation-merge, Step 5 subgraph-merge, Step 6 audit-fix loop. Defines stop conditions, parallel dispatch, and error handling.",
     },
     "schema_audit": {
         "name": "schema-audit",
@@ -204,11 +214,13 @@ class TestOldFlatFilesRemoved:
 
     OLD_FLAT_PATHS = [
         "skills/worker/socratic_inquiry.md",
+        "skills/worker/kg_gen_pipeline.md",
         "skills/worker/schema_creation.md",
-        "skills/worker/entity_collection.md",
-        "skills/worker/schema_refinement.md",
+        "skills/worker/schema_merge.md",
+        "skills/worker/evidence_search.md",
         "skills/worker/triple_extraction.md",
-        "skills/worker/graph_persistence.md",
+        "skills/worker/entity_relation_merge.md",
+        "skills/worker/subgraph_merge.md",
         "skills/verifier/schema_audit.md",
         "skills/verifier/graph_structure_audit.md",
         "skills/verifier/graphrag_validation.md",

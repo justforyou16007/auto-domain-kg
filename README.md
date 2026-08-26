@@ -122,6 +122,9 @@ uv run pytest
 | `TRANSLATION_ENDPOINT` | OpenAI-compatible translation API endpoint (for bilingual search result translation) | `` |
 | `TRANSLATION_API_KEY` | Translation API key (Bearer token) | `` |
 | `TRANSLATION_MODEL` | Translation model name | `gpt-4o-mini` |
+| `EXTRACTION_ENDPOINT` | Extraction API endpoint (entity-relation extraction, `info_extraction.py`) | `` |
+| `EXTRACTION_API_KEY` | Extraction API key (Bearer token) | `` |
+| `EXTRACTION_MODEL` | Extraction model name | `gpt-4o` |
 | `EVIDENCE_DIR` | Evidence storage directory | `data/evidence` |
 
 ### Provider Configuration (CLAUDE.md)
@@ -136,11 +139,17 @@ worker_provider: claude/claude-sonnet-4-20250514
 collector_provider: claude/claude-sonnet-4-20250514
 # Verifier (Codex)
 verifier_provider: codex/gpt-4o
+# Extraction provider — entity/relation extraction + translation API (info_extraction.py)
+extraction_provider: claude/claude-sonnet-4-20250514
+# Translation provider — bilingual search result translation API (translation.py / info_extraction.py)
+translation_provider: claude/claude-sonnet-4-20250514
 ```
 
 Format: `<cli>/<model-name>` where `cli` is `claude` or `codex`, and `model-name` is an available model for that CLI.
 
-## 5-Step Construction Flow
+## 6-Step Construction Flow (kg-gen-pipeline)
+
+The KG construction pipeline has been restructured from a monolithic `schema_creation` loop into a **deep-research-style multi-agent pipeline** orchestrated by the `kg-gen-pipeline` skill. It uses the Paseo MCP `spawn_agent` tool to dispatch **parallel sub-agents** at each phase, following a deep-research methodology.
 
 ### Step 1: Socratic Inquiry
 Extract user concerns through a **small number** of high-level questions (3-4 core questions). The agent asks about:
@@ -149,44 +158,47 @@ Extract user concerns through a **small number** of high-level questions (3-4 co
 - **Entity & Relationship types (approximate, optional)**: approximate entity types and relationship types — the user may say "not sure"
 - **Risk concerns (optional)**: what risks to monitor
 
-The user does **NOT** need to provide a detailed Schema, entity properties, or inheritance hierarchies at setup time. Schema is *discovered* through exploration in Step 2. If the user is unsure about entity types/relationships, proceed with just the domain and task — the exploration loop will discover them.
+The user does **NOT** need to provide a detailed Schema, entity properties, or inheritance hierarchies at setup time. Schema is *discovered* through exploration in Step 2.
 
 **Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
-### Step 2: Iterative Schema Generation, Entity Collection & Triple Extraction
-An iterative, research-driven discovery loop that combines schema generation, entity collection, triple extraction, and refinement. **Exploration-first**: the user's Step 1 input is a starting point, not a complete specification — Schema types and relationships are *discovered* through exploration, and the agent searches broadly beyond what the user mentioned (adjacent domains, supply-chain上下游, related industries). The `schema_creation` skill follows an iterative discovery flow:
+### Step 2: Parallel Schema Proposal (Paseo dispatch)
+Use the Paseo MCP `spawn_agent` tool to dispatch N (default **5**) parallel sub-agents, each loading the `schema_creation` skill:
+1. **GraphRAG search existing Neo4j Schema** (vector search + multi-hop) to find related Schema already in the graph.
+2. Based on search results + the sub-agent's own domain knowledge, create concept-level Schema entity types and relationship types.
+3. **Cache locally** to `tmp/schema_proposals/agent_N.json`.
+4. **Notify the main Agent** when done.
 
-a. **Load user domain info** — read the user's domain and concerns from `CLAUDE.md` (treat approximate entity/relationship types as hints, not constraints).
-b. **Bilingual search** — for each sub-topic, the agent generates BOTH a Chinese and an English query. Use `bilingual_search()` (on the news adapter) instead of `search_news()` so retrieval is not limited by the search language; merge and deduplicate results by URL. Explore broadly — do not restrict the search to what the user mentioned.
-c. **Translate** — translate all bilingual search results to the working language (default `zh-CN`) via `translate_content()` / `TranslationClient` before proceeding. Each translated item carries `original_language`.
-d. **Create Schema & relationships** — based on the **translated** search results, define Schema-level entity types and relationship types (concept-level only) and merge into `tmp/schema_definition.json`. Let the schema emerge from the data.
-e. **Extract Triples** — for each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the **translated** collected evidence, guided by the Schema layer. Only extract concrete Instance entities. Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`.
-f. **Collect evidence** — weak sub-agents search for news/articles about the iteration's entities using `bilingual_search()` + `translate_content()`, and save evidence to `data/evidence/` (2-3 independent sources per entity). Collection and extraction are integrated — evidence feeds directly into triple extraction.
-g. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the translated search results as evidence.
-h. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
-i. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
-j. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
-k. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
-l. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
+The `schema_creation` skill does **ONLY** Schema + Relation creation — no entity collection, triple extraction, refinement, or persistence. It keeps the Exploration-First Principle and Schema/Instance separation, and uses bilingual search + translation for initial domain research.
 
-Triples are cross-validated across multiple independent sources — single-source facts are marked as **low confidence**, conflicting facts are flagged for human review, and critical facts require 3+ independent sources. After each iteration, refine the partial schema with cross-iteration consistency checks, and add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
+**Skills**: `skills/worker/kg_gen_pipeline/SKILL.md`, `skills/worker/schema_creation/SKILL.md`
 
-**Skills**: `skills/worker/schema_creation/SKILL.md`, `skills/worker/entity_collection/SKILL.md`, `skills/worker/triple_extraction/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`
+### Step 3: Schema Merge
+Merge the N Schema proposals from Step 2 together with existing Neo4j Schema into one global Schema:
+- **Maintain the SUBCLASS_OF hierarchy** (e.g. Car → EV → Xiaomi Auto → ...). Uses `neo4j_client.create_schema_hierarchy()`, `get_schema_ancestors()`, `find_common_ancestor()`.
+- Detect duplicates, resolve conflicts, ensure a concept-level-only ontology.
+- Output: merged global Schema in `tmp/schema_definition.json`.
 
-### Step 3: Graph Persistence
-Persist the Schema (concept ontology) and Instance entities to Neo4j:
-- Create Schema nodes (concept-level info only)
-- **Relation alignment check**: before persisting, run `GraphOps.validate_relation_alignment()` and `GraphOps.get_missing_schema_relations()` to ensure Schema, Schema-relation, entity, and entity-relation are aligned
-- Create entity nodes with auto-embedding, carrying `source_url` / `source_text` for provenance, and link them to Schema via `HAS_SCHEMA`
-- Create relationships, validating Instance relationships against the Schema before persisting
-- **Semantic merging** of Schema/Instance nodes: use GraphRAG (vector retrieval + multi-hop subgraph exploration) to find related nodes already in the graph and merge semantically similar ones (hierarchy-aware — can merge to a parent Schema level via `SUBCLASS_OF`)
-- **Completeness gap discovery**: analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, and generate new queries fed back to Step 2
-- Set up the vector index and verify embeddings / graph connectivity
+**Skill**: `skills/worker/schema_merge/SKILL.md`
 
-**Skill**: `skills/worker/graph_persistence/SKILL.md`
+### Step 4: Per-Schema/Relation Parallel Extraction (Paseo dispatch)
+For each new Schema/Relation, dispatch a sub-agent (parallel execution). Each sub-agent runs three sub-phases:
 
-### Step 4: Verifier Audit (Adversarial Loop with Traceability)
-The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability. Defaults to the **strictest** auditing — any error-level issue blocks a round from passing.
+**4a. evidence-search** (deep-research style) — multi-round search: each round generates zh + en queries → `bilingual_search()` top-k=20 → merge by URL → `translate_content()` to zh-CN → analyze findings → generate next-round questions → continue. **Does NOT stop after finding one piece of evidence** — goal is comprehensive coverage; stop when a round produces no new facts.
+
+**4b. triple_extraction** (per Schema/Relation dimension) — from the Schema/Relation's leaf entities, explore outward **X-hop** (default **3**). Extract entities and relations along Schema-defined Relation directions; form a subgraph centered on the leaf entity where each node carries an evidence slice + `source_url`. Validate entity-relation against schema-relation alignment; flag triples needing schema extension.
+
+**4c. entity-relation-merge** — entity alignment via semantic judgment (e.g. 苹果 ↔ Apple) → subgraph merge. Bind entity ↔ Schema via `HAS_SCHEMA`; mark entities with no matching Schema as "empty Schema" for later Schema creation. Uses `graph_ops.find_merge_target_with_hierarchy()` and `merge_entity_to_parent_schema()`.
+
+**Skills**: `skills/worker/evidence_search/SKILL.md`, `skills/worker/triple_extraction/SKILL.md`, `skills/worker/entity_relation_merge/SKILL.md`
+
+### Step 5: Subgraph Merge
+Take the Neo4j intersection **2-hop subgraph** of newly inserted entities and merge overlapping subgraphs (uses `graph_ops.multi_hop_subgraph()` and `vector_search()`). For entities with empty Schema, create new Schema nodes and route them through `schema_merge`. For new Schema, **repeat Step 4** recursively. This phase also performs **completeness gap discovery** — analyzing the graph structure to find missing entities, missing connections, and uncovered sub-topics, then feeding new exploration queries back into the recursive Step 4. **Stop condition**: new search entities are completely irrelevant to the user's domain concerns (no butterfly effect — only direct domain relevance counts).
+
+**Skill**: `skills/worker/subgraph_merge/SKILL.md`
+
+### Step 6: Audit → Fix Loop (fix from Step 4)
+The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability. Defaults to the **strictest** auditing — any error-level issue blocks a round from passing. On error-level issues, fix from **Step 4** (re-run evidence-search + triple_extraction + entity-relation-merge for the affected Schema/Relation), then re-audit.
 
 1. **Load rubrics** from `config/audit_rubrics.yaml` (strictest level; customize thresholds there without touching skill code)
 2. **Run all 5 audit sub-agents**, each applying its rubric thresholds:
@@ -197,14 +209,14 @@ The GAN-style adversarial loop between the verifier (discriminator) and the work
    - **Task Relevance Audit**: does the graph address user concerns?
 3. **Generate an audit report** via `AuditReportGenerator` (markdown + JSON), saved to `reports/audits/round_N/`
 4. **Append to `AuditHistory`** (`reports/audits/audit_history.jsonl`) for traceability
-5. **If error-level issues found**: send them to the worker, which fixes them and records what it changed (`fix_description`, `issue_ids_addressed`, `files_modified`)
+5. **If error-level issues found**: send them to the worker, which fixes them (from **Step 4**) and records what it changed (`fix_description`, `issue_ids_addressed`, `files_modified`)
 6. **Re-run the audit** (next round) and compare against the previous round — trace any issue across rounds with `AuditHistory.get_issue_trace(issue_id)` (first found → fixed → reappeared?)
 7. **Loop** until all audits pass or max rounds (default 5)
 8. **Final convergence summary** via `AuditHistory.get_summary()` (rounds, issues resolved, issues recurring, error/warning trend)
 
 **Skills**: `skills/verifier/schema_audit/SKILL.md`, `skills/verifier/graph_structure_audit/SKILL.md`, `skills/verifier/graphrag_validation/SKILL.md`, `skills/verifier/evidence_audit/SKILL.md`, `skills/verifier/task_relevance_audit/SKILL.md`
 
-### Step 5: Completion
+### Completion
 - Summary of what was built
 - Statistics (entity count, relation count, schema count)
 - Reminder of daily update and risk assessment features
@@ -316,6 +328,9 @@ Abstract `NewsAdapter` interface and `GoogleSearchNewsAdapter` implementation. B
 ### `translation.py`
 External API translation client (OpenAI-compatible chat completions) used to translate bilingual search results to the working language. `TranslationConfig` reads `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL` from the environment. `TranslationClient` provides `translate()` (translate arbitrary text) and `translate_news_item()` (translate a `NewsItem`'s title and content, preserving the URL/source and recording `original_language`). Degrades gracefully — when no endpoint is configured, text is returned unchanged.
 
+### `info_extraction.py`
+Information extraction API client with two modes: **generic API mode** (`InfoExtractionClient.extract()`) sends text to a general-purpose LLM chat-completions endpoint and parses the structured entities/relations JSON it returns, and **dedicated extraction API mode** (`InfoExtractionClient.extract_dedicated()`) sends text to a specialized entity-relation extraction endpoint. It also doubles as a translation API client (`InfoExtractionClient.translate()`) reusing the same endpoint infrastructure. `ExtractionConfig` reads `EXTRACTION_ENDPOINT` / `EXTRACTION_API_KEY` / `EXTRACTION_MODEL` and `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL` from the environment. Includes async methods, caching, robust JSON parsing (tolerates Markdown fences), and graceful degradation (empty extractions / original text when unconfigured).
+
 ### `graph_ops.py`
 High-level graph operations combining Neo4j, embedding, and evidence store. Provides composite operations like `create_entity_node()` (auto-embeds and links to schema, accepts `source_url` / `source_text` for provenance). Hierarchy-aware merge operations: `find_merge_target_with_hierarchy()` (hierarchy-aware merge target finding, traversing `SUBCLASS_OF` upward) and `merge_entity_to_parent_schema()` (merge an entity to a parent Schema level).
 
@@ -403,15 +418,18 @@ auto-domain-kg/
 │       ├── risk_assessment.py
 │       ├── audit_rubrics.py
 │       ├── audit_report.py
-│       └── translation.py
+│       ├── translation.py
+│       └── info_extraction.py
 ├── skills/
-│   ├── worker/             # Worker skills (6 directories)
+│   ├── worker/             # Worker skills (8 directories)
 │   │   ├── socratic_inquiry/SKILL.md
+│   │   ├── kg_gen_pipeline/SKILL.md
 │   │   ├── schema_creation/SKILL.md
-│   │   ├── entity_collection/SKILL.md
-│   │   ├── schema_refinement/SKILL.md
+│   │   ├── schema_merge/SKILL.md
+│   │   ├── evidence_search/SKILL.md
 │   │   ├── triple_extraction/SKILL.md
-│   │   └── graph_persistence/SKILL.md
+│   │   ├── entity_relation_merge/SKILL.md
+│   │   └── subgraph_merge/SKILL.md
 │   ├── verifier/           # Verifier skills (5 directories)
 │   │   ├── schema_audit/SKILL.md
 │   │   ├── graph_structure_audit/SKILL.md
@@ -432,7 +450,7 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files
-└── tests/                  # pytest tests (11 files)
+└── tests/                  # pytest tests (12 files)
 ```
 
 ## Documentation Sync Rule
