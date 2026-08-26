@@ -49,10 +49,13 @@ verifier_provider: codex/gpt-4o
 
 ### Step 3: Graph Persistence
 - Load skill: skills/worker/graph_persistence/SKILL.md
-- Persist schema + instances to Neo4j.
-- Before persisting, run relation alignment check (`GraphOps.validate_relation_alignment` and `GraphOps.get_missing_schema_relations`) to ensure Schema, Schema-relation, entity, and entity-relation are aligned.
-- Link entities to schema nodes.
-- Embed for vector search.
+- **Relation alignment check** (before persisting): run `GraphOps.validate_relation_alignment` and `GraphOps.get_missing_schema_relations` to ensure Schema, Schema-relation, entity, and entity-relation are aligned. Do NOT persist entity relations that have no schema relation definition.
+- Create Schema nodes (concept-level info only).
+- Create entity nodes with auto-embedding, carrying `source_url` / `source_text` for provenance, and link them to Schema via `HAS_SCHEMA`. Every entity node must be traceable to its source.
+- Create relationships, validating Instance relationships against the Schema before persisting (flag Schema extension needs / inconsistencies).
+- **Semantic merging** of Schema/Instance nodes: use GraphRAG (vector retrieval + multi-hop subgraph exploration) to find related nodes already in the graph and merge semantically similar ones. Hierarchy-aware — `GraphOps.find_merge_target_with_hierarchy()` traverses `SUBCLASS_OF` upward, and `GraphOps.merge_entity_to_parent_schema()` can promote an entity to a parent Schema level.
+- **Completeness gap discovery**: analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, and generate new queries fed back to Step 2.
+- Set up the vector index (`GraphOps.setup_vector_index()`) and verify embeddings / graph connectivity. Print statistics (entity count, relation count, schema count).
 
 ### Step 4: Verifier Audit (Adversarial Loop with Traceability)
 The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability.
@@ -92,10 +95,11 @@ Each round's audit report and worker fixes are persisted for full traceability. 
 ## Daily Update Flow
 1. Load skill: skills/updater/daily_update/SKILL.md
 2. Scan for entity-related news (today's date).
-3. Determine if graph update is needed (schema or instance).
-4. Send news to worker agent for partial graph update.
-5. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`.
-6. Run verifier to validate the update.
+3. **Cross-validate news from multiple sources** before updating — use multi-source cross-validation to confirm facts; discard or flag single-source / conflicting reports.
+4. Determine if graph update is needed (schema or instance).
+5. Send news to worker agent for partial graph update. When new entities don't fit the current Schema level, use **hierarchy-aware Schema merging** — traverse `SUBCLASS_OF` to merge to a parent Schema level.
+6. When risk events are detected, trigger the full 6-step risk analysis pipeline via `RiskAssessment.run_full_analysis()`.
+7. Run verifier to validate the update.
 
 ## Risk Assessment Feature — 6-Step News-to-Graph Impact Analysis
 1. Load skill: skills/risk/risk_assessment/SKILL.md

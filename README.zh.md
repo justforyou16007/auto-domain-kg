@@ -300,7 +300,7 @@ config.save_to_file("config/audit_rubrics.yaml")
 ## Python 模块说明
 
 ### `neo4j_client.py`
-Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多跳 Cypher 查询。支持密码认证和无认证两种模式。实体节点携带 `source_url` 和 `source_text` 字段用于来源追溯；`create_entity_node()` 可通过可选参数接收这些字段。通过 Schema 节点之间的 `SUBCLASS_OF` 关系支持 Schema 层级：`create_schema_hierarchy()`、`get_schema_ancestors()`、`get_schema_descendants()`、`find_common_ancestor()`、`get_schema_with_ancestors()`。
+Neo4j 连接管理、模式/实例的增删改查、向量索引操作、多跳 Cypher 查询以及多模态检索。支持密码认证和无认证两种模式。实体节点携带 `source_url` 和 `source_text` 字段用于来源追溯；`create_entity_node()` 可通过可选参数接收这些字段。通过 Schema 节点之间的 `SUBCLASS_OF` 关系支持 Schema 层级：`create_schema_hierarchy()`、`get_schema_ancestors()`、`get_schema_descendants()`、`find_common_ancestor()`、`get_schema_with_ancestors()`。检索方法：`vector_search()`（向量相似度检索）、`keyword_search()`（基于 CONTAINS 的轻量级关键词检索，无需索引）、`bm25_search()`（BM25 排序的全文检索，不可用时优雅降级到 `keyword_search()`）。
 
 ### `embedding.py`
 外部 API 的 Embedding 客户端（兼容 OpenAI / vLLM）。支持批量嵌入、缓存，以及可配置的端点、模型和维度。
@@ -309,7 +309,10 @@ Neo4j 连接管理、模式/实例的增删改查、向量索引操作以及多�
 证据存储模块，以 JSONL 文件形式保存在 `data/evidence/` 目录下，附带来源追踪信息。每条记录包含 entity_id、text_slice、source_url 和时间戳。多源交叉验证方法：`get_source_urls()`（获取所有唯一来源 URL）、`get_source_count()`（统计独立来源数量）、`cross_validate()`（检查多个来源是否一致或冲突）、`is_well_supported()`（检查是否满足最小来源数量要求）。
 
 ### `news_adapter.py`
-抽象 `NewsAdapter` 接口及 `GoogleSearchNewsAdapter` 实现。可扩展——通过继承 `NewsAdapter` 实现自定义适配器。
+抽象 `NewsAdapter` 接口及 `GoogleSearchNewsAdapter` 实现。双语检索支持：`search_news()`（单语种检索）、`bilingual_search()`（同时发起中文和英文查询，按 URL 合并去重）、`translate_content()`（通过翻译客户端将 `NewsItem` 翻译为工作语言）、`bilingual_search_and_translate()`（执行双语检索后翻译全部结果）。可扩展——通过继承 `NewsAdapter` 实现自定义适配器。
+
+### `translation.py`
+外部 API 翻译客户端（兼容 OpenAI 的 chat completions），用于将双语检索结果翻译为工作语言。`TranslationConfig` 从环境变量读取 `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL`。`TranslationClient` 提供 `translate()`（翻译任意文本）和 `translate_news_item()`（翻译 `NewsItem` 的标题与正文，保留 URL/source 并记录 `original_language`）。优雅降级——未配置端点时原文返回。
 
 ### `graph_ops.py`
 高层图谱操作，整合 Neo4j、Embedding 和证据存储。提供 `create_entity_node()` 等复合操作（自动生成嵌入并链接到 Schema，可通过 `source_url` / `source_text` 参数接收来源信息）。层级感知合并操作：`find_merge_target_with_hierarchy()`（层级感知的合并目标查找，沿 `SUBCLASS_OF` 向上追溯）和 `merge_entity_to_parent_schema()`（将实体合并到父级 Schema 层级）。
@@ -397,7 +400,8 @@ auto-domain-kg/
 │       ├── graph_ops.py
 │       ├── risk_assessment.py
 │       ├── audit_rubrics.py
-│       └── audit_report.py
+│       ├── audit_report.py
+│       └── translation.py
 ├── skills/
 │   ├── worker/             # Worker 技能文件（6 个目录）
 │   │   ├── socratic_inquiry/SKILL.md
@@ -426,8 +430,18 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件
-└── tests/                  # pytest 测试文件（9 个）
+└── tests/                  # pytest 测试文件（11 个）
 ```
+
+## 文档同步规则
+
+**每次代码修改都必须同步更新对应文档。** 当你修改 `src/` 中的源码文件、`skills/` 中的技能文件或配置文件时，必须同时更新：
+
+- `README.md` 和 `README.zh.md` — 模块说明、功能列表、流程描述
+- `CLAUDE.md` — 流程步骤、技能引用、Provider 配置
+- `tests/test_readme_sync.py` — 为新功能添加断言
+
+此规则适用于所有变更：Bug 修复、功能新增、重构和配置更新。修改代码但未更新文档的 PR 是不完整的。
 
 ## 许可证
 

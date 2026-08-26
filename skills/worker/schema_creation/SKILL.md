@@ -17,7 +17,7 @@ Iteratively research domain topics and generate a **Schema-layer concept ontolog
 - When the user provides approximate entity types, **treat them as hints, not constraints**. Search broadly within the domain and let the schema emerge from the data.
 - If the user said "not sure" about entity/relationship types in Step 1, that is expected — discover them here through broad exploration.
 
-## Bilingual Search + Translation (Issue #25)
+## Bilingual Search + Translation
 
 Retrieval completeness must not be limited by the search query's language. Before exploring Schema and entities:
 

@@ -302,7 +302,7 @@ Under STRICT auditing, **any error-level issue blocks the round from passing**; 
 ## Python Modules
 
 ### `neo4j_client.py`
-Neo4j connection management, schema/instance CRUD, vector index operations, and multi-hop Cypher queries. Supports both password auth and no-auth. Entity nodes carry `source_url` and `source_text` fields for source provenance; `create_entity_node()` accepts these as optional parameters. Schema hierarchy is supported via `SUBCLASS_OF` relationships between Schema nodes: `create_schema_hierarchy()`, `get_schema_ancestors()`, `get_schema_descendants()`, `find_common_ancestor()`, `get_schema_with_ancestors()`.
+Neo4j connection management, schema/instance CRUD, vector index operations, multi-hop Cypher queries, and multi-modal search. Supports both password auth and no-auth. Entity nodes carry `source_url` and `source_text` fields for source provenance; `create_entity_node()` accepts these as optional parameters. Schema hierarchy is supported via `SUBCLASS_OF` relationships between Schema nodes: `create_schema_hierarchy()`, `get_schema_ancestors()`, `get_schema_descendants()`, `find_common_ancestor()`, `get_schema_with_ancestors()`. Search methods: `vector_search()` (vector similarity), `keyword_search()` (lightweight CONTAINS-based keyword search, no index required), and `bm25_search()` (BM25-ranked full-text search with graceful fallback to `keyword_search()`).
 
 ### `embedding.py`
 External API embedding client (OpenAI-compatible / vLLM). Supports batch embedding, caching, and configurable endpoint/model/dimensions.
@@ -311,7 +311,10 @@ External API embedding client (OpenAI-compatible / vLLM). Supports batch embeddi
 Evidence storage as JSONL files in `data/evidence/` with provenance tracking. Each record includes entity_id, text_slice, source_url, and timestamps. Multi-source cross-validation methods: `get_source_urls()` (all unique source URLs), `get_source_count()` (count independent sources), `cross_validate()` (check whether multiple sources agree or conflict), and `is_well_supported()` (check the minimum source count requirement).
 
 ### `news_adapter.py`
-Abstract `NewsAdapter` interface and `GoogleSearchNewsAdapter` implementation. Extensible — implement your own adapter by subclassing `NewsAdapter`.
+Abstract `NewsAdapter` interface and `GoogleSearchNewsAdapter` implementation. Bilingual retrieval support: `search_news()` (single-language search), `bilingual_search()` (issue both a Chinese and an English query, merge and deduplicate by URL), `translate_content()` (translate a `NewsItem` to the working language via the translation client), and `bilingual_search_and_translate()` (run bilingual search then translate all results). Extensible — implement your own adapter by subclassing `NewsAdapter`.
+
+### `translation.py`
+External API translation client (OpenAI-compatible chat completions) used to translate bilingual search results to the working language. `TranslationConfig` reads `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL` from the environment. `TranslationClient` provides `translate()` (translate arbitrary text) and `translate_news_item()` (translate a `NewsItem`'s title and content, preserving the URL/source and recording `original_language`). Degrades gracefully — when no endpoint is configured, text is returned unchanged.
 
 ### `graph_ops.py`
 High-level graph operations combining Neo4j, embedding, and evidence store. Provides composite operations like `create_entity_node()` (auto-embeds and links to schema, accepts `source_url` / `source_text` for provenance). Hierarchy-aware merge operations: `find_merge_target_with_hierarchy()` (hierarchy-aware merge target finding, traversing `SUBCLASS_OF` upward) and `merge_entity_to_parent_schema()` (merge an entity to a parent Schema level).
@@ -399,7 +402,8 @@ auto-domain-kg/
 │       ├── graph_ops.py
 │       ├── risk_assessment.py
 │       ├── audit_rubrics.py
-│       └── audit_report.py
+│       ├── audit_report.py
+│       └── translation.py
 ├── skills/
 │   ├── worker/             # Worker skills (6 directories)
 │   │   ├── socratic_inquiry/SKILL.md
@@ -428,8 +432,18 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # Evidence JSONL files
 ├── tmp/                    # Temporary working files
-└── tests/                  # pytest tests (9 files)
+└── tests/                  # pytest tests (11 files)
 ```
+
+## Documentation Sync Rule
+
+**Every code change must be accompanied by corresponding documentation updates.** When you modify any source file in `src/`, skill file in `skills/`, or configuration file, you must also update:
+
+- `README.md` and `README.zh.md` — module descriptions, feature lists, step descriptions
+- `CLAUDE.md` — flow steps, skill references, provider configuration
+- `tests/test_readme_sync.py` — add assertions for new features
+
+This rule applies to all changes: bug fixes, feature additions, refactors, and configuration updates. A PR that changes code without updating documentation is incomplete.
 
 ## License
 
