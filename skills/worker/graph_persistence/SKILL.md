@@ -1,14 +1,21 @@
 ---
 name: graph-persistence
-description: "Step 4 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability."
+description: "Step 3 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability."
 ---
 
-# Graph Persistence — Step 4: Persist Schema + Instances to Neo4j
+# Graph Persistence — Step 3: Persist Schema + Instances to Neo4j
 
 ## Goal
 Persist the domain Schema (concept ontology) and extracted Instance entities to Neo4j, link entities to their Schema nodes, validate Instance relationships against Schema, perform semantic merging, generate embeddings, and discover completeness gaps.
 
 ## Process
+
+### 0. Relation Alignment Check (before persisting)
+Before persisting, ensure Schema, Schema-relations, entity, and entity-relations are aligned:
+- Load the Schema from `tmp/schema_definition.json` and the extracted triples from `tmp/extracted_triples.md`.
+- Run `GraphOps.validate_relation_alignment(schema_definition, extracted_triples)` to check that every triple's relation type has a corresponding schema-level relationship definition.
+- Run `GraphOps.get_missing_schema_relations(triples, schema_definition)` to find entity relations that have no schema relation counterpart.
+- If missing schema relations are found, either add them to the schema (schema extension) or skip persisting those triples. Do NOT persist entity relations that have no schema relation definition — this keeps Schema, Schema-relation, entity, and entity-relation layers aligned.
 
 ### 1. Load Schema
 - Load the Schema from `tmp/schema_definition.json`.

@@ -137,7 +137,7 @@ verifier_provider: codex/gpt-4o
 
 Format: `<cli>/<model-name>` where `cli` is `claude` or `codex`, and `model-name` is an available model for that CLI.
 
-## 6-Step Construction Flow
+## 5-Step Construction Flow
 
 ### Step 1: Socratic Inquiry
 Extract user concerns through structured questioning. The agent asks about:
@@ -149,31 +149,29 @@ Extract user concerns through structured questioning. The agent asks about:
 
 **Skill**: `skills/worker/socratic_inquiry/SKILL.md`
 
-### Step 2: Iterative Schema Generation & Entity Collection
-An iterative, research-driven discovery loop that combines schema generation, entity collection, and refinement. The `schema_creation` skill follows a 9-step iterative discovery flow:
+### Step 2: Iterative Schema Generation, Entity Collection & Triple Extraction
+An iterative, research-driven discovery loop that combines schema generation, entity collection, triple extraction, and refinement. The `schema_creation` skill follows an iterative discovery flow:
 
 a. **Load user domain info** — read the user's domain and concerns from `CLAUDE.md`.
 b. **Search** — research a sub-topic or entity cluster using the web search API, focusing on concept types and business relationships.
 c. **Create Schema & relationships** — define Schema-level entity types and relationship types (concept-level only) and merge into `tmp/schema_definition.json`.
-d. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the search results as evidence.
-e. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
-f. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
-g. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
-h. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
-i. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
+d. **Extract Triples** — for each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from collected evidence, guided by the Schema layer. Only extract concrete Instance entities. Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`.
+e. **Collect evidence** — weak sub-agents search for news/articles about the iteration's entities and save evidence to `data/evidence/` (2-3 independent sources per entity). Collection and extraction are integrated — evidence feeds directly into triple extraction.
+f. **Extract entities & relations** — extract concrete Instance entities matching the new Schema types, using the search results as evidence.
+g. **GraphRAG retrieval** — for each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph.
+h. **Semantic merging** — merge semantically similar Schema/Instance nodes (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity), using hierarchy-aware merging that can promote to a parent Schema via `SUBCLASS_OF`.
+i. **Persist to graph** — save the current batch of Schema + Instance + Relationships to Neo4j.
+j. **Discover completeness gaps** — analyze the graph structure to find missing entities, missing connections, and uncovered sub-topics, then generate new exploration queries.
+k. **Repeat** from step **b** with the new queries until search results and discovered entities can no longer materially affect the entities relevant to the user's domain concerns.
 
-Each iteration also collects evidence: weak sub-agents search for news/articles about the iteration's entities and save evidence to `data/evidence/` (2-3 independent sources per entity), then refine the partial schema with cross-iteration consistency checks.
+Triples are cross-validated across multiple independent sources — single-source facts are marked as **low confidence**, conflicting facts are flagged for human review, and critical facts require 3+ independent sources. After each iteration, refine the partial schema with cross-iteration consistency checks, and add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
 
-**Skills**: `skills/worker/schema_creation/SKILL.md`, `skills/worker/entity_collection/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`
+**Skills**: `skills/worker/schema_creation/SKILL.md`, `skills/worker/entity_collection/SKILL.md`, `skills/worker/triple_extraction/SKILL.md`, `skills/worker/schema_refinement/SKILL.md`
 
-### Step 3: Triple Extraction
-Weak sub-agents extract (entity, relation, entity) triples with evidence from the collected evidence. Extraction is guided by the Schema layer: only concrete Instance entities are extracted, and Instance relationships are validated against Schema-to-Schema relationships. Triples are cross-validated across multiple independent sources — single-source facts are marked as **low confidence**, conflicting facts are flagged for human review, and critical facts require 3+ independent sources.
-
-**Skill**: `skills/worker/triple_extraction/SKILL.md`
-
-### Step 4: Graph Persistence
+### Step 3: Graph Persistence
 Persist the Schema (concept ontology) and Instance entities to Neo4j:
 - Create Schema nodes (concept-level info only)
+- **Relation alignment check**: before persisting, run `GraphOps.validate_relation_alignment()` and `GraphOps.get_missing_schema_relations()` to ensure Schema, Schema-relation, entity, and entity-relation are aligned
 - Create entity nodes with auto-embedding, carrying `source_url` / `source_text` for provenance, and link them to Schema via `HAS_SCHEMA`
 - Create relationships, validating Instance relationships against the Schema before persisting
 - **Semantic merging** of Schema/Instance nodes: use GraphRAG (vector retrieval + multi-hop subgraph exploration) to find related nodes already in the graph and merge semantically similar ones (hierarchy-aware — can merge to a parent Schema level via `SUBCLASS_OF`)
@@ -182,7 +180,7 @@ Persist the Schema (concept ontology) and Instance entities to Neo4j:
 
 **Skill**: `skills/worker/graph_persistence/SKILL.md`
 
-### Step 5: Verifier Audit (Adversarial Loop with Traceability)
+### Step 4: Verifier Audit (Adversarial Loop with Traceability)
 The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability. Defaults to the **strictest** auditing — any error-level issue blocks a round from passing.
 
 1. **Load rubrics** from `config/audit_rubrics.yaml` (strictest level; customize thresholds there without touching skill code)
@@ -201,7 +199,7 @@ The GAN-style adversarial loop between the verifier (discriminator) and the work
 
 **Skills**: `skills/verifier/schema_audit/SKILL.md`, `skills/verifier/graph_structure_audit/SKILL.md`, `skills/verifier/graphrag_validation/SKILL.md`, `skills/verifier/evidence_audit/SKILL.md`, `skills/verifier/task_relevance_audit/SKILL.md`
 
-### Step 6: Completion
+### Step 5: Completion
 - Summary of what was built
 - Statistics (entity count, relation count, schema count)
 - Reminder of daily update and risk assessment features
@@ -253,7 +251,7 @@ If Entity A (a supplier) has a factory fire, the pipeline:
 
 ## Audit Report & Adversarial Traceability (Issues #14, #15)
 
-The verifier audit (Step 5) now produces detailed **audit reports** and runs a real **GAN-style adversarial loop** with full traceability. Audit strictness defaults to the **strictest** level so incomplete or unusable graphs are never accepted.
+The verifier audit (Step 4) now produces detailed **audit reports** and runs a real **GAN-style adversarial loop** with full traceability. Audit strictness defaults to the **strictest** level so incomplete or unusable graphs are never accepted.
 
 ### Audit Reports
 Each adversarial round generates a detailed audit report (markdown + JSON) describing all graph audit characteristics:

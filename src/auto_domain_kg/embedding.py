@@ -91,6 +91,20 @@ class EmbeddingClient:
         """Create a cache key for a text string."""
         return text.strip().lower()
 
+    def is_available(self) -> bool:
+        """Check whether the embedding endpoint is configured.
+
+        This performs a lightweight, non-network check: it only verifies
+        that the configuration is present (endpoint URL is set and non-empty).
+        It does NOT send a request to the endpoint. Use this to decide
+        whether to fall back to keyword/BM25 search when embeddings are
+        unavailable.
+
+        Returns:
+            True if the embedding endpoint is configured, False otherwise.
+        """
+        return bool(self._config.endpoint and self._config.endpoint.strip())
+
     async def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text.
 

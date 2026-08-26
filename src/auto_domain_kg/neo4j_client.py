@@ -463,7 +463,8 @@ class Neo4jClient:
         query = (
             f"MATCH (a) WHERE elementId(a) = $from_id "
             f"MATCH (b) WHERE elementId(b) = $to_id "
-            f"CREATE (a)-[r:{rel_type} $properties]->(b) "
+            f"CREATE (a)-[r:{rel_type}]->(b) "
+            f"SET r = $properties "
             f"RETURN elementId(r) AS id"
         )
         results = await self._run_query(
@@ -541,6 +542,96 @@ class Neo4jClient:
             },
         )
         return results
+
+    # ---- Keyword & Full-Text Search ----
+
+    async def keyword_search(
+        self,
+        query: str,
+        labels: Optional[list[str]] = None,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search entities and schemas by keyword using CONTAINS.
+
+        A lightweight keyword search that works without any vector index or
+        full-text index. It scans the ``name`` and ``source_url``/``source_text``
+        (entities) or ``name`` and ``source`` (schemas) properties of nodes.
+
+        Args:
+            query: Search query string (matched as a substring).
+            labels: Optional list of labels to restrict the search to
+                (e.g., ``["Entity"]``). Defaults to searching both
+                ``Entity`` and ``Schema`` nodes.
+            top_k: Maximum number of results to return.
+
+        Returns:
+            List of matched nodes (each a dict with a ``node`` key holding
+            node properties). Empty list if nothing matches.
+        """
+        search_labels = labels or ["Entity", "Schema"]
+        clauses: list[str] = []
+        for label in search_labels:
+            # Build a CONTAINS-based clause for this label
+            prop_checks = [f"n.name CONTAINS $query"]
+            if label == "Schema":
+                prop_checks.append("n.source CONTAINS $query")
+            else:
+                prop_checks.append("n.source_url CONTAINS $query")
+                prop_checks.append("n.source_text CONTAINS $query")
+            checks = " OR ".join(prop_checks)
+            clauses.append(
+                f"MATCH (n:{label}) WHERE {checks} "
+                f"RETURN n AS node"
+            )
+        query_str = " UNION ".join(clauses) + f" LIMIT {top_k}"
+        results = await self._run_query(query_str, {"query": query})
+        return results
+
+    async def bm25_search(
+        self,
+        query_text: str,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Full-text (BM25) search over entities and schemas.
+
+        Uses Neo4j's ``db.index.fulltext.queryNodes`` procedure to perform
+        a BM25-ranked search. Requires a full-text index named
+        ``entity_schema_fts`` on the ``name``, ``source_url``, ``source_text``
+        (Entity) and ``name``, ``source`` (Schema) properties.
+
+        If the full-text index does not exist, this falls back gracefully to
+        :meth:`keyword_search` so callers always get a result.
+
+        Args:
+            query_text: Search query string.
+            top_k: Maximum number of results to return.
+
+        Returns:
+            List of matched nodes with a ``node`` key (node properties) and,
+            when using the full-text index, a ``score`` key.
+        """
+        try:
+            query_str = (
+                "CALL db.index.fulltext.queryNodes($index_name, $query_text) "
+                "YIELD node, score "
+                "RETURN node, score "
+                "ORDER BY score DESC "
+                f"LIMIT {top_k}"
+            )
+            results = await self._run_query(
+                query_str,
+                {
+                    "index_name": "entity_schema_fts",
+                    "query_text": query_text,
+                },
+            )
+            if results:
+                return results
+        except Exception:
+            # Full-text index may not exist; fall back to keyword search
+            pass
+        # Fallback: keyword-based search (no BM25 ranking)
+        return await self.keyword_search(query_text, top_k=top_k)
 
     # ---- Multi-hop Cypher Queries ----
 

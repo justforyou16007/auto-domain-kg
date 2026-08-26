@@ -42,20 +42,24 @@ The full iteration cycle is:
 - Relationship types must have **explicit business semantics** (e.g., `PRODUCES`, `SUPPLIES`, `PART_OF`, `LOCATED_IN`)
 - Append new types to `tmp/schema_definition.json` (merge with existing, deduplicate by name)
 
-**d. Extract Corresponding Entities** — Extract concrete Instance-level entities that match the Schema types just created, using the search results as evidence.
+**d. Extract Triples** — For each entity/triple sub-graph discovered during the exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the search evidence, guided by the Schema layer just created. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
 
-**e. GraphRAG Merge** — For each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph. If semantically similar nodes exist, merge them (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity).
+**e. Collect Evidence** — Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files (2-3 independent sources per entity). Use the `entity_collection` skill for this sub-step.
 
-**f. Persist** — Save the current batch of Schema + Instance + Relationships to Neo4j.
+**f. Extract Corresponding Entities** — Extract concrete Instance-level entities that match the Schema types just created, using the search results as evidence.
 
-**g. Discover Completeness Gaps** — Analyze the current graph structure to identify gaps:
+**g. GraphRAG Merge** — For each Schema type and Instance entity, perform vector retrieval + multi-hop subgraph exploration to find related nodes already in the graph. If semantically similar nodes exist, merge them (e.g., "Xiaomi Auto" and "Xiaomi SU7" may refer to the same entity).
+
+**h. Persist** — Save the current batch of Schema + Instance + Relationships to Neo4j.
+
+**i. Discover Completeness Gaps** — Analyze the current graph structure to identify gaps:
 - Which Schema types lack Instance entities?
 - Which relationships lack connections between entities?
 - Which domain sub-topics are not yet covered?
 
-**h. Generate New Query** — Based on the gap analysis, formulate a new search query to explore the next area.
+**j. Generate New Query** — Based on the gap analysis, formulate a new search query to explore the next area.
 
-**i. Repeat** from step **b** until the termination condition is met.
+**k. Repeat** from step **b** until the termination condition is met.
 
 ### Termination Condition
 

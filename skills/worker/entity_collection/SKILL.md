@@ -6,7 +6,7 @@ description: "Part of iterative Step 2 of KG construction. During each schema it
 # Entity Collection — Part of Iterative Step 2: Evidence Collection per Iteration
 
 ## Goal
-During each iteration of schema creation, search for news and articles about the entities discovered in that iteration, collecting evidence with provenance. Evidence serves the **current iteration's Schema and Instance entities**. This runs as part of the iterative loop, not as a separate standalone step.
+During each iteration of schema creation, search for news and articles about the entities discovered in that iteration, collecting evidence with provenance. Evidence serves the **current iteration's Schema and Instance entities**. Collection and extraction are integrated — evidence collected here feeds directly into the triple extraction sub-step of the same iteration. This runs as part of the iterative loop, not as a separate standalone step.
 
 ## Weak Agent Instructions
 

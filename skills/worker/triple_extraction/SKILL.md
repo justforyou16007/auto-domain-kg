@@ -1,9 +1,9 @@
 ---
 name: triple-extraction
-description: "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
+description: "Part of Step 2 iterative loop. Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/."
 ---
 
-# Triple Extraction — Step 3c: Extract Entity-Relation-Entity Triples (Instance Layer)
+# Triple Extraction — Part of Step 2 Iterative Loop: Extract Entity-Relation-Entity Triples (Instance Layer)
 
 ## Goal
 Extract (entity, relation, entity) triples with evidence slices from collected news articles. Extraction is **guided by the Schema layer**: it only extracts concrete **Instance-level** entities, and validates entity relationships against the Schema's relationship types.

@@ -19,39 +19,37 @@ collector_provider: claude/claude-sonnet-4-20250514
 # Verifier (Codex)
 verifier_provider: codex/gpt-4o
 
-## 6-Step Construction Flow
+## 5-Step Construction Flow
 
 ### Step 1: Socratic Inquiry
 - Load skill: skills/worker/socratic_inquiry/SKILL.md
 - Ask the user structured questions to understand their domain, entities, relationships, risk concerns, and update frequency.
 - Save the results to the User Concerns section of this file.
 
-### Step 2: Iterative Schema Generation & Entity Collection (Iterative Loop)
-- Load skills: skills/worker/schema_creation/SKILL.md, skills/worker/entity_collection/SKILL.md, skills/worker/schema_refinement/SKILL.md
-- Run an iterative loop that combines schema generation, entity collection, and refinement:
+### Step 2: Iterative Schema Generation, Entity Collection & Triple Extraction (Iterative Loop)
+- Load skills: skills/worker/schema_creation/SKILL.md, skills/worker/entity_collection/SKILL.md, skills/worker/schema_refinement/SKILL.md, skills/worker/triple_extraction/SKILL.md
+- Run an iterative loop that combines schema generation, entity collection, triple extraction, and refinement:
   1. **Search**: Research a sub-topic or entity cluster within the domain (using web search).
   2. **Create Schema**: Based on search results, define partial entity types and relationship types. Merge into `tmp/schema_definition.json`.
-  3. **Collect Evidence**: Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files.
-  4. **Refine Schema**: Refine the partial schema based on the evidence just collected. Perform cross-iteration consistency checks (deduplication, conflict resolution).
-  5. **Assess Coverage**: Evaluate whether the current iteration produced new entity types or relationship types. If not, or if search results are outside the domain scope, terminate the loop.
-  6. **Continue/Stop**: If new types were found, start the next iteration (go to step 1). Otherwise, proceed to Step 3.
+  3. **Extract Triples**: For each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from collected evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
+  4. **Collect Evidence**: Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files.
+  5. **Refine Schema**: Refine the partial schema based on the evidence and extracted triples just collected. Perform cross-iteration consistency checks (deduplication, conflict resolution). Add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
+  6. **Assess Coverage**: Evaluate whether the current iteration produced new entity types or relationship types. If not, or if search results are outside the domain scope, terminate the loop.
+  7. **Continue/Stop**: If new types were found, start the next iteration (go to step 1). Otherwise, proceed to Step 3.
 - Skills used in the loop:
   - `schema_creation/SKILL.md` — iterative research-driven schema generation
-  - `entity_collection/SKILL.md` — per-iteration evidence collection
+  - `triple_extraction/SKILL.md` — per-iteration triple extraction (part of Step 2, not a separate step)
+  - `entity_collection/SKILL.md` — per-iteration evidence collection (integrated with extraction)
   - `schema_refinement/SKILL.md` — per-iteration refinement and cross-iteration consistency
 
-### Step 3: Triple Extraction (Weak Agents)
-- Load skill: skills/worker/triple_extraction/SKILL.md
-- Spawn weak sub-agents to extract (entity, relation, entity) triples with evidence slices.
-- Save entities + relations to a markdown file + evidence to data/evidence/.
-
-### Step 4: Graph Persistence
+### Step 3: Graph Persistence
 - Load skill: skills/worker/graph_persistence/SKILL.md
 - Persist schema + instances to Neo4j.
+- Before persisting, run relation alignment check (`GraphOps.validate_relation_alignment` and `GraphOps.get_missing_schema_relations`) to ensure Schema, Schema-relation, entity, and entity-relation are aligned.
 - Link entities to schema nodes.
 - Embed for vector search.
 
-### Step 5: Verifier Audit (Adversarial Loop with Traceability)
+### Step 4: Verifier Audit (Adversarial Loop with Traceability)
 The GAN-style adversarial loop between the verifier (discriminator) and the worker (generator), with full audit report output and traceability.
 
 1. **Load rubrics**: Load audit rubrics from `config/audit_rubrics.yaml` (defaults to the **strictest** level). Use `RubricsConfig.load_from_file()`, falling back to `RubricsConfig.load_default()`.
@@ -81,7 +79,7 @@ The GAN-style adversarial loop between the verifier (discriminator) and the work
 
 Each round's audit report and worker fixes are persisted for full traceability. This makes the GAN adversarial process substantively effective — the verifier's strict findings drive concrete worker fixes, and every fix is traceable back to the issue it addressed.
 
-### Step 6: Completion
+### Step 5: Completion
 - Print summary of what was built.
 - Print statistics (entity count, relation count, schema count).
 - Remind user of daily update and risk assessment features.

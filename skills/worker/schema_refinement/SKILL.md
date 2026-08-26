@@ -13,13 +13,15 @@ After each iteration's entity collection, refine the partial schema based on the
 ### Per-Iteration Refinement (runs after each entity collection iteration)
 
 1. **Review collection findings** from the current iteration in `tmp/collection_report.md`.
-2. **Identify schema gaps** in the current iteration's partial schema:
+2. **Review extracted triples** from the current iteration in `tmp/extracted_triples.md`. Triples flagged with `schema_extension_needed` indicate schema relations that must be added.
+3. **Identify schema gaps** in the current iteration's partial schema:
    - Concept-level entity types that appeared in sources but aren't in the schema
    - Properties that are commonly found but not defined
    - Business relationship types that emerge from the data
    - Missing entity types implied by relationships
+   - **Missing schema relations**: relationship types present in triples but not defined in the schema (flagged by triple extraction as `schema_extension_needed`). Add these to the schema so entity relations and schema relations stay aligned.
 
-3. **Refine entity types** for the current iteration (concept layer only):
+4. **Refine entity types** for the current iteration (concept layer only):
    - Add new concept-level entity types as needed (merge into `tmp/schema_definition.json`)
    - Add missing properties
    - Adjust property types if actual data differs
