@@ -105,6 +105,29 @@ else
     log_info "  Or visit: https://github.com/openai/codex"
 fi
 
+# ─── 3b. Check Extraction & Translation API config ─────────────────────────────
+log_info "Checking Extraction & Translation API configuration..."
+EXTRACTION_ENDPOINT_VAL="${EXTRACTION_ENDPOINT:-}"
+EXTRACTION_API_KEY_VAL="${EXTRACTION_API_KEY:-}"
+TRANSLATION_ENDPOINT_VAL="${TRANSLATION_ENDPOINT:-}"
+TRANSLATION_API_KEY_VAL="${TRANSLATION_API_KEY:-}"
+
+if [ -n "$EXTRACTION_ENDPOINT_VAL" ] && [ -n "$EXTRACTION_API_KEY_VAL" ]; then
+    log_ok "Extraction API configured (EXTRACTION_ENDPOINT + EXTRACTION_API_KEY)."
+else
+    log_warn "Extraction API not fully configured."
+    log_info "  Set EXTRACTION_ENDPOINT and EXTRACTION_API_KEY for entity-relation extraction (info_extraction.py)."
+    log_info "  The pipeline degrades gracefully when these are absent (returns empty extractions)."
+fi
+
+if [ -n "$TRANSLATION_ENDPOINT_VAL" ] && [ -n "$TRANSLATION_API_KEY_VAL" ]; then
+    log_ok "Translation API configured (TRANSLATION_ENDPOINT + TRANSLATION_API_KEY)."
+else
+    log_warn "Translation API not fully configured."
+    log_info "  Set TRANSLATION_ENDPOINT and TRANSLATION_API_KEY for bilingual search result translation (translation.py)."
+    log_info "  The pipeline degrades gracefully when these are absent (returns original text)."
+fi
+
 # ─── 4. Check Neo4j ────────────────────────────────────────────────────────────
 log_info "Checking Neo4j availability..."
 NEO4J_FOUND=false
@@ -133,11 +156,13 @@ mkdir -p "$PROJECT_DIR"
 mkdir -p "$PROJECT_DIR/src/auto_domain_kg"
 mkdir -p "$PROJECT_DIR/skills/worker"
 mkdir -p "$PROJECT_DIR/skills/worker/socratic_inquiry"
+mkdir -p "$PROJECT_DIR/skills/worker/kg_gen_pipeline"
 mkdir -p "$PROJECT_DIR/skills/worker/schema_creation"
-mkdir -p "$PROJECT_DIR/skills/worker/entity_collection"
-mkdir -p "$PROJECT_DIR/skills/worker/schema_refinement"
+mkdir -p "$PROJECT_DIR/skills/worker/schema_merge"
+mkdir -p "$PROJECT_DIR/skills/worker/evidence_search"
 mkdir -p "$PROJECT_DIR/skills/worker/triple_extraction"
-mkdir -p "$PROJECT_DIR/skills/worker/graph_persistence"
+mkdir -p "$PROJECT_DIR/skills/worker/entity_relation_merge"
+mkdir -p "$PROJECT_DIR/skills/worker/subgraph_merge"
 mkdir -p "$PROJECT_DIR/skills/verifier"
 mkdir -p "$PROJECT_DIR/skills/verifier/schema_audit"
 mkdir -p "$PROJECT_DIR/skills/verifier/graph_structure_audit"
@@ -252,6 +277,12 @@ echo "     export EMBEDDING_ENDPOINT=http://localhost:8000/v1/embeddings"
 echo "     export EMBEDDING_MODEL=BAAI/bge-m3"
 echo "     export GOOGLE_API_KEY=your_key        # for news adapter"
 echo "     export GOOGLE_CSE_ID=your_cse_id       # for news adapter"
+echo "     export EXTRACTION_ENDPOINT=http://localhost:8000/v1/chat/completions  # entity-relation extraction"
+echo "     export EXTRACTION_API_KEY=[REDACTED]    # extraction API key"
+echo "     export EXTRACTION_MODEL=gpt-4o          # extraction model"
+echo "     export TRANSLATION_ENDPOINT=http://localhost:8000/v1/chat/completions  # bilingual translation"
+echo "     export TRANSLATION_API_KEY=[REDACTED]   # translation API key"
+echo "     export TRANSLATION_MODEL=gpt-4o-mini    # translation model"
 echo ""
 echo "  3. Edit CLAUDE.md to set provider models:"
 echo "     worker_provider: claude/<model-name>"

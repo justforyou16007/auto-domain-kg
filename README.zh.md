@@ -122,6 +122,9 @@ uv run pytest
 | `TRANSLATION_ENDPOINT` | OpenAI 兼容的翻译 API 端点（用于双语检索结果翻译） | `` |
 | `TRANSLATION_API_KEY` | 翻译 API 密钥（Bearer token） | `` |
 | `TRANSLATION_MODEL` | 翻译模型名称 | `gpt-4o-mini` |
+| `EXTRACTION_ENDPOINT` | 抽取 API 端点（实体-关系抽取，`info_extraction.py`） | `` |
+| `EXTRACTION_API_KEY` | 抽取 API 密钥（Bearer token） | `` |
+| `EXTRACTION_MODEL` | 抽取模型名称 | `gpt-4o` |
 | `EVIDENCE_DIR` | 证据存储目录 | `data/evidence` |
 
 ### 模型提供商配置（CLAUDE.md）
@@ -136,11 +139,17 @@ worker_provider: claude/claude-sonnet-4-20250514
 collector_provider: claude/claude-sonnet-4-20250514
 # Verifier（Codex）
 verifier_provider: codex/gpt-4o
+# Extraction provider — 实体/关系抽取 + 翻译 API（info_extraction.py）
+extraction_provider: claude/claude-sonnet-4-20250514
+# Translation provider — 双语检索结果翻译 API（translation.py / info_extraction.py）
+translation_provider: claude/claude-sonnet-4-20250514
 ```
 
 格式说明：`<cli>/<model-name>`，其中 `cli` 为 `claude` 或 `codex`，`model-name` 为该 CLI 可用的模型名称。
 
-## 五步构建流程
+## 6 步构建流程（kg-gen-pipeline）
+
+KG 构建流程已从单体 `schema_creation` 循环重构为**深度研究风格的多智能体流水线**，由 `kg-gen-pipeline` 技能编排。它使用 Paseo MCP 的 `spawn_agent` 工具在每个阶段 dispatch **并行子智能体**，遵循深度研究方法论。
 
 ### 第一步：苏格拉底式问询
 通过**少量**高层问题（3-4 个核心问题）提取用户关注点。智能体将询问以下内容：
@@ -149,44 +158,47 @@ verifier_provider: codex/gpt-4o
 - **实体与关系类型（近似，可选）**：大致的实体类型和关系类型——用户可回答"不确定"
 - **风险关注（可选）**：需要监控哪些风险
 
-用户在 setup 阶段**无需**提供详细的 Schema、实体属性或继承层级。Schema 在第二步通过*探索*发现，而非在初始化时固定。如果用户对实体类型/关系不确定，仅凭领域和任务即可继续——探索循环会发现它们。
+用户在 setup 阶段**无需**提供详细的 Schema、实体属性或继承层级。Schema 在第二步通过*探索*发现。
 
 **技能文件**：`skills/worker/socratic_inquiry/SKILL.md`
 
-### 第二步：迭代式模式生成、实体采集与三元组抽取
-迭代式研究驱动的发现循环，将模式生成、实体采集、三元组抽取和修正整合在一起。**探索优先**：用户在第一步的输入是起点，而非完整规格——Schema 类型与关系通过*探索*发现，智能体会在用户提及范围之外广泛搜索（相邻领域、供应链上下游、相关行业）。`schema_creation` 技能遵循一个迭代发现流程：
+### 第二步：并行模式提议（Paseo dispatch）
+使用 Paseo MCP 的 `spawn_agent` 工具 dispatch N（默认 **5**）个并行子智能体，每个加载 `schema_creation` 技能：
+1. **GraphRAG 检索已有 Neo4j Schema**（向量检索 + 多跳）查找图中已有的相关 Schema。
+2. 基于检索结果 + 子智能体自身的领域知识，创建概念级 Schema 实体类型和关系类型。
+3. **本地缓存**到 `tmp/schema_proposals/agent_N.json`。
+4. **通知主智能体**完成。
 
-a. **加载用户领域信息** —— 从 `CLAUDE.md` 读取用户的领域与关注点（将近似的实体/关系类型视为提示而非约束）。
-b. **双语检索** —— 对每个子主题，智能体**同时生成中文和英文查询**。使用 `bilingual_search()`（在 news adapter 上）替代 `search_news()`，使检索不受查询语种限制；按 URL 合并去重。广泛探索——不要将搜索局限于用户提及的内容。
-c. **翻译** —— 在继续之前，通过 `translate_content()` / `TranslationClient` 将所有双语检索结果翻译为工作语言（默认 `zh-CN`）。每个翻译后的条目携带 `original_language`。
-d. **创建模式与关系** —— 基于**翻译后**的搜索结果，定义 Schema 级实体类型和关系类型（仅概念级），合并到 `tmp/schema_definition.json`。让模式从数据中涌现。
-e. **抽取三元组** —— 对探索过程中发现的每个实体/三元组子图，使用 Paseo MCP 的 `spawn_agent` 工具 dispatch sub-agent 进行并行探索。从**翻译后**采集的证据中抽取（实体，关系，实体）三元组，由 Schema 层引导。仅抽取具体的 Instance 实体。依据 Schema 到 Schema 的关系校验每个三元组的关系类型；标记需要 schema extension 的三元组。保存三元组到 `tmp/extracted_triples.md`。
-f. **采集证据** —— 弱智能体使用 `bilingual_search()` + `translate_content()` 搜索本次迭代实体的新闻/文章并保存证据到 `data/evidence/`（每个实体需 2-3 个独立来源）。采集与抽取是一体的——证据直接用于三元组抽取。
-g. **抽取实体与关系** —— 以翻译后的搜索结果为证据，抽取匹配新 Schema 类型的具体 Instance 实体。
-h. **GraphRAG 检索** —— 对每个 Schema 类型和 Instance 实体，进行向量检索 + 多跳子图探索，查找图中已有的相关节点。
-i. **语义合并** —— 合并语义相似的 Schema/Instance 节点（如 "Xiaomi Auto" 与 "Xiaomi SU7" 可能指向同一实体），采用层级感知合并，可通过 `SUBCLASS_OF` 提升到父级 Schema。
-j. **持久化到图谱** —— 将当前批次的 Schema + Instance + Relationships 保存到 Neo4j。
-k. **发现完整性缺口** —— 分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新的探索查询。
-l. **重复** —— 用新查询从步骤 **b** 重新开始，直到搜索结果与发现的实体不再对用户领域相关的实体产生实质性影响。
+`schema_creation` 技能**仅**创建 Schema + Relation——不做实体采集、三元组抽取、修正或持久化。它保留探索优先原则和 Schema/Instance 分离，并使用双语检索 + 翻译进行初始领域研究。
 
-三元组在多个独立来源之间进行交叉验证——单一来源的事实被标记为**低置信度**，冲突的事实标记为需人工复核，关键事实要求 3 个以上独立来源。每次迭代后，基于证据和抽取的三元组修正部分模式并执行跨迭代一致性检查，将三元组抽取中标记为 `schema_extension_needed` 的缺失 schema 关系补充到模式中，确保 Schema、Schema-relation、entity、entity-relation 层对齐。
+**技能文件**：`skills/worker/kg_gen_pipeline/SKILL.md`、`skills/worker/schema_creation/SKILL.md`
 
-**技能文件**：`skills/worker/schema_creation/SKILL.md`、`skills/worker/entity_collection/SKILL.md`、`skills/worker/triple_extraction/SKILL.md`、`skills/worker/schema_refinement/SKILL.md`
+### 第三步：模式合并
+将第二步 N 个 Schema 提议与已有 Neo4j Schema 合并为一个全局 Schema：
+- **维护 SUBCLASS_OF 层级**（如 Car → EV → Xiaomi Auto → ...）。使用 `neo4j_client.create_schema_hierarchy()`、`get_schema_ancestors()`、`find_common_ancestor()`。
+- 检测重复、解决冲突，确保仅概念级本体。
+- 输出：合并后的全局 Schema 到 `tmp/schema_definition.json`。
 
-### 第三步：图谱持久化
-将 Schema（概念本体）和 Instance 实体持久化到 Neo4j：
-- 创建 Schema 节点（仅包含概念级信息）
-- **关系对齐检查**：持久化前运行 `GraphOps.validate_relation_alignment()` 和 `GraphOps.get_missing_schema_relations()`，确保 Schema、Schema-relation、entity、entity-relation 对齐
-- 创建实体节点（自动生成向量嵌入），携带 `source_url` / `source_text` 来源信息，并通过 `HAS_SCHEMA` 链接到 Schema
-- 创建关系，持久化前依据 Schema 校验 Instance 关系
-- **Schema/Instance 节点的语义合并**：使用 GraphRAG（向量检索 + 多跳子图探索）查找图中已有的相关节点，合并语义相似的节点（层级感知——可通过 `SUBCLASS_OF` 合并到父级 Schema 层级）
-- **完整性缺口发现**：分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，生成新查询反馈到第二步
-- 设置向量索引，验证嵌入与图连通性
+**技能文件**：`skills/worker/schema_merge/SKILL.md`
 
-**技能文件**：`skills/worker/graph_persistence/SKILL.md`
+### 第四步：按 Schema/Relation 并行抽取（Paseo dispatch）
+对每个新的 Schema/Relation，dispatch 一个子智能体（并行执行）。每个子智能体运行三个子阶段：
 
-### 第四步：Verifier 审计（带可追溯性的对抗循环）
-GAN 风格的 Verifier（判别器）与 Worker（生成器）之间的对抗循环，带有完整的审计报告输出与可追溯性。默认采用**最严格**的审计策略——任何 error 级别的问题都会阻止该轮通过。
+**4a. evidence-search**（深度研究风格）——多轮检索：每轮生成 zh + en 查询 → `bilingual_search()` top-k=20 → 按 URL 合并 → `translate_content()` 翻译为 zh-CN → 分析发现 → 生成下一轮问题 → 继续。**找到一条证据后不停**——目标是全面覆盖；当某轮未产生新事实时停止。
+
+**4b. triple_extraction**（按 Schema/Relation 维度）——从 Schema/Relation 的叶实体向外探索 **X 跳**（默认 **3**）。沿 Schema 定义的 Relation 方向抽取实体和关系；形成以叶实体为中心的子图，每个节点携带证据切片 + `source_url`。校验实体-关系与 schema-relation 对齐；标记需要 schema extension 的三元组。
+
+**4c. entity-relation-merge**——通过语义判断进行实体对齐（如 苹果 ↔ Apple）→ 子图合并。通过 `HAS_SCHEMA` 绑定实体 ↔ Schema；将无匹配 Schema 的实体标记为"empty Schema"以便后续创建 Schema。使用 `graph_ops.find_merge_target_with_hierarchy()` 和 `merge_entity_to_parent_schema()`。
+
+**技能文件**：`skills/worker/evidence_search/SKILL.md`、`skills/worker/triple_extraction/SKILL.md`、`skills/worker/entity_relation_merge/SKILL.md`
+
+### 第五步：子图合并
+取新插入实体的 Neo4j 交集 **2 跳子图**并合并重叠子图（使用 `graph_ops.multi_hop_subgraph()` 和 `vector_search()`）。对 empty Schema 的实体，创建新 Schema 节点并经 `schema_merge` 处理。对新 Schema，**递归重复第四步**。该阶段还执行**完整性缺口发现**——分析图结构找出缺失的实体、缺失的连接和未覆盖的子主题，将新探索查询反馈到递归的第四步。**停止条件**：新检索实体与用户领域关注点完全无关（无蝴蝶效应——仅直接领域相关性才算）。
+
+**技能文件**：`skills/worker/subgraph_merge/SKILL.md`
+
+### 第六步：审计 → 修复循环（从第四步修复）
+GAN 风格的 Verifier（判别器）与 Worker（生成器）之间的对抗循环，带有完整的审计报告输出与可追溯性。默认采用**最严格**的审计策略——任何 error 级别的问题都会阻止该轮通过。发现 error 级别问题时，从**第四步**修复（对受影响的 Schema/Relation 重新运行 evidence-search + triple_extraction + entity-relation-merge），然后重新审计。
 
 1. **加载 rubrics** —— 从 `config/audit_rubrics.yaml` 加载审计 rubrics（默认最严格；可在该文件中自定义阈值，无需改动技能代码）
 2. **运行全部 5 个审计子智能体**，各自应用其 rubric 阈值：
@@ -197,14 +209,14 @@ GAN 风格的 Verifier（判别器）与 Worker（生成器）之间的对抗循
    - **任务相关性审计**：图谱是否覆盖用户关注点？
 3. **生成审计报告** —— 通过 `AuditReportGenerator` 生成（markdown + JSON），保存到 `reports/audits/round_N/`
 4. **追加到 `AuditHistory`**（`reports/audits/audit_history.jsonl`）以便追溯
-5. **若发现 error 级别问题** —— 将问题发送给 Worker，Worker 修复并记录其改动（`fix_description`、`issue_ids_addressed`、`files_modified`）
+5. **若发现 error 级别问题** —— 将问题发送给 Worker，Worker 从**第四步**修复并记录其改动（`fix_description`、`issue_ids_addressed`、`files_modified`）
 6. **重新运行审计**（下一轮）并与上一轮对比 —— 用 `AuditHistory.get_issue_trace(issue_id)` 追踪问题在各轮间的变化（首次发现 → 已修复 → 是否复发）
 7. **循环**直至所有审计通过或达到最大轮数（默认 5）
 8. **最终收敛摘要** —— 通过 `AuditHistory.get_summary()` 输出（轮数、已解决问题、复发问题、error/warning 趋势）
 
 **技能文件**：`skills/verifier/schema_audit/SKILL.md`、`skills/verifier/graph_structure_audit/SKILL.md`、`skills/verifier/graphrag_validation/SKILL.md`、`skills/verifier/evidence_audit/SKILL.md`、`skills/verifier/task_relevance_audit/SKILL.md`
 
-### 第五步：完成
+### 完成
 - 构建结果摘要
 - 统计信息（实体数量、关系数量、模式数量）
 - 提醒每日更新和风险评估功能
@@ -314,6 +326,9 @@ Neo4j 连接管理、模式/实例的增删改查、向量索引操作、多跳 
 ### `translation.py`
 外部 API 翻译客户端（兼容 OpenAI 的 chat completions），用于将双语检索结果翻译为工作语言。`TranslationConfig` 从环境变量读取 `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL`。`TranslationClient` 提供 `translate()`（翻译任意文本）和 `translate_news_item()`（翻译 `NewsItem` 的标题与正文，保留 URL/source 并记录 `original_language`）。优雅降级——未配置端点时原文返回。
 
+### `info_extraction.py`
+信息抽取 API 客户端，支持两种模式：**通用 API 模式**（`InfoExtractionClient.extract()`）将文本发送到通用 LLM chat completions 端点并解析其返回的结构化 entities/relations JSON；**专用抽取 API 模式**（`InfoExtractionClient.extract_dedicated()`）将文本发送到专用的实体-关系抽取端点。它同时兼作翻译 API 客户端（`InfoExtractionClient.translate()`）复用同一套端点基础设施。`ExtractionConfig` 从环境变量读取 `EXTRACTION_ENDPOINT` / `EXTRACTION_API_KEY` / `EXTRACTION_MODEL` 与 `TRANSLATION_ENDPOINT` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL`。包含 async 方法、缓存、鲁棒的 JSON 解析（容忍 Markdown 代码块），以及优雅降级（未配置时返回空抽取结果 / 原文）。
+
 ### `graph_ops.py`
 高层图谱操作，整合 Neo4j、Embedding 和证据存储。提供 `create_entity_node()` 等复合操作（自动生成嵌入并链接到 Schema，可通过 `source_url` / `source_text` 参数接收来源信息）。层级感知合并操作：`find_merge_target_with_hierarchy()`（层级感知的合并目标查找，沿 `SUBCLASS_OF` 向上追溯）和 `merge_entity_to_parent_schema()`（将实体合并到父级 Schema 层级）。
 
@@ -401,15 +416,18 @@ auto-domain-kg/
 │       ├── risk_assessment.py
 │       ├── audit_rubrics.py
 │       ├── audit_report.py
-│       └── translation.py
+│       ├── translation.py
+│       └── info_extraction.py
 ├── skills/
-│   ├── worker/             # Worker 技能文件（6 个目录）
+│   ├── worker/             # Worker 技能文件（8 个目录）
 │   │   ├── socratic_inquiry/SKILL.md
+│   │   ├── kg_gen_pipeline/SKILL.md
 │   │   ├── schema_creation/SKILL.md
-│   │   ├── entity_collection/SKILL.md
-│   │   ├── schema_refinement/SKILL.md
+│   │   ├── schema_merge/SKILL.md
+│   │   ├── evidence_search/SKILL.md
 │   │   ├── triple_extraction/SKILL.md
-│   │   └── graph_persistence/SKILL.md
+│   │   ├── entity_relation_merge/SKILL.md
+│   │   └── subgraph_merge/SKILL.md
 │   ├── verifier/           # Verifier 技能文件（5 个目录）
 │   │   ├── schema_audit/SKILL.md
 │   │   ├── graph_structure_audit/SKILL.md
@@ -430,7 +448,7 @@ auto-domain-kg/
 ├── data/
 │   └── evidence/           # 证据 JSONL 文件
 ├── tmp/                    # 临时工作文件
-└── tests/                  # pytest 测试文件（11 个）
+└── tests/                  # pytest 测试文件（12 个）
 ```
 
 ## 文档同步规则
