@@ -1,43 +1,42 @@
 ---
 name: socratic-inquiry
-description: "Step 1 of KG construction. Ask structured Socratic questions to extract user concerns, domain scope, entity types, relationships, risk concerns, and update frequency. Save results to CLAUDE.md."
+description: "Step 1 of KG construction. Ask a small number of Socratic questions to capture the user's domain, primary task, approximate entity/relationship types, and risk concerns. The user does NOT need to provide a detailed Schema — Schema is discovered through exploration in Step 2, not fixed at setup time. Save results to CLAUDE.md."
 ---
 
 # Socratic Inquiry — Step 1: Extract User Concerns
 
 ## Goal
-Understand what the user wants from the knowledge graph by asking structured Socratic questions.
+Understand what the user wants from the knowledge graph by asking a **small number** of high-level Socratic questions. Keep the setup lightweight and user-friendly — the detailed Schema, entities, and relationships are *discovered* through the exploration loop in Step 2, not specified by the user here.
+
+## Exploration-First Principle
+
+> The user's answers here are a **starting point**, not a complete specification. Schema types and relationships are *discovered* through iterative exploration in Step 2. The user does NOT need to provide a detailed Schema at setup time. If the user is unsure about entity types or relationships, proceed with just the domain and task — the exploration loop will discover them.
 
 ## Process
 
-1. **Greet the user** and explain the 6-step construction process.
-2. **Ask questions** in the order below, adapting follow-ups based on answers.
+1. **Greet the user** and explain the 5-step construction process. Emphasize that they only need a high-level intent; details are discovered during exploration.
+2. **Ask the 3-4 core questions** below (in order). Q3 and Q4 are optional.
 3. **Save results** to the `User Concerns` section of `CLAUDE.md`.
 
 ## Questions to Ask
 
-### Domain
-- What domain or industry are you building this knowledge graph for? (e.g., supply chain, healthcare, finance, research)
-- What is the primary purpose of this KG? (e.g., risk monitoring, competitive intelligence, research synthesis)
+Keep it short. Ask at most these four questions; do NOT drill into properties, inheritance hierarchies, directional/temporal constraints, or update-frequency details.
 
-### Entities
-- What are the key entity types in your domain? (e.g., companies, people, products, events)
-- For each entity type, what properties would you like to track? (e.g., name, description, location, status)
-- Are there any entity hierarchies or inheritance relationships? (e.g., "Company is a type of Organization")
+### Q1 — Domain (required)
+- What domain or industry are you building this knowledge graph for? (e.g., supply chain, semiconductor, healthcare, finance)
 
-### Relationships
-- What are the key relationships between entities? (e.g., "supplies", "acquires", "partners with")
-- Are there any directional or temporal constraints on relationships?
-- Should relationships carry properties (e.g., contract_value, start_date)?
+### Q2 — Primary Task/Purpose (required)
+- What is the primary task or purpose of this KG? (e.g., risk monitoring, competitive intelligence, research synthesis)
 
-### Risk Concerns
-- What risk concerns do you have? (e.g., supply chain disruption, regulatory changes, competitor moves)
-- What entities are most critical to your risk monitoring?
-- What would trigger a risk alert for you?
+### Q3 — Approximate Entity & Relationship Types (optional)
+- What are the approximate entity types and relationship types you care about? (e.g., "companies, products, suppliers" and "supplies, partners with")
+- **If the user is unsure, say "not sure" — proceed with just the domain and task. The exploration loop will discover them. Treat the user's answer as hints, not constraints.**
 
-### Update Frequency
-- How often should the knowledge graph be updated? (daily, weekly, monthly)
-- Would you like automated daily news scanning for entity updates?
+### Q4 — Specific Risk Concerns (optional)
+- Any specific risk concerns you want monitored? (e.g., supply chain disruption, regulatory changes, competitor moves)
+- If none, proceed — risk monitoring can be configured later.
+
+> **Do NOT ask** about: detailed entity properties, inheritance hierarchies, relationship properties, directional/temporal constraints, or update-frequency specifics. These are discovered during exploration, not fixed at setup.
 
 ## Output Format
 
@@ -45,14 +44,15 @@ After collecting answers, write to `CLAUDE.md`:
 
 ```markdown
 ## User Concerns
-- Concern: <summary of user's primary concern>
+- Concern: <one-line summary of the user's primary concern>
   - Domain: <domain>
-  - Entities: <entity type list>
-  - Relationships: <relationship type list>
-  - Risk concerns: <risk concerns>
-  - Update frequency: <frequency>
+  - Task: <primary task/purpose>
+  - Entity types (approximate, optional): <list or "to be discovered">
+  - Relationship types (approximate, optional): <list or "to be discovered">
+  - Risk concerns (optional): <risk concerns or "none specified">
 ```
 
 ## Verification
 - Confirm with the user that the summary is accurate.
+- Remind them that the detailed Schema will be *discovered* during Step 2 exploration — they do not need to finalize it now.
 - Ask if they want to add anything before proceeding to Step 2.

@@ -2,13 +2,15 @@
 
 ## User Concerns
 <!-- This section is filled by the Socratic inquiry step (Step 1). -->
+<!-- The user does NOT need to provide a detailed Schema. Schema is -->
+<!-- discovered through exploration in Step 2, not fixed at setup time. -->
 <!-- Format: -->
-<!-- - Concern: <description> -->
+<!-- - Concern: <one-line summary of the user's primary concern> -->
 <!--   - Domain: <domain> -->
-<!--   - Entities: <key entity types> -->
-<!--   - Relationships: <key relationship types> -->
-<!--   - Risk concerns: <risk concerns> -->
-<!--   - Update frequency: <daily|weekly|monthly> -->
+<!--   - Task: <primary task/purpose> -->
+<!--   - Entity types (approximate, optional): <list or "to be discovered"> -->
+<!--   - Relationship types (approximate, optional): <list or "to be discovered"> -->
+<!--   - Risk concerns (optional): <risk concerns or "none specified"> -->
 
 ## Provider Configuration
 # Worker (Claude Code) — user fills in available model
@@ -23,23 +25,26 @@ verifier_provider: codex/gpt-4o
 
 ### Step 1: Socratic Inquiry
 - Load skill: skills/worker/socratic_inquiry/SKILL.md
-- Ask the user structured questions to understand their domain, entities, relationships, risk concerns, and update frequency.
+- Ask a **small number** of high-level questions (3-4 core questions): domain, primary task/purpose, approximate entity/relationship types (optional), and risk concerns (optional). Keep setup user-friendly — do NOT drill into entity properties, inheritance hierarchies, or relationship constraints.
+- The user does NOT need to provide a detailed Schema. Schema is discovered through exploration in Step 2, not fixed at setup time. If the user is unsure about entity types/relationships, proceed with just the domain and task.
 - Save the results to the User Concerns section of this file.
 
 ### Step 2: Iterative Schema Generation, Entity Collection & Triple Extraction (Iterative Loop)
 - Load skills: skills/worker/schema_creation/SKILL.md, skills/worker/entity_collection/SKILL.md, skills/worker/schema_refinement/SKILL.md, skills/worker/triple_extraction/SKILL.md
+- **Exploration-first**: the user's Step 1 input is a starting point, not a complete specification. Schema types and relationships are *discovered* through iterative exploration. Search broadly beyond what the user mentioned — adjacent domains, supply-chain上下游, related industries. Treat approximate entity types as hints, not constraints.
 - Run an iterative loop that combines schema generation, entity collection, triple extraction, and refinement:
-  1. **Search**: Research a sub-topic or entity cluster within the domain (using web search).
-  2. **Create Schema**: Based on search results, define partial entity types and relationship types. Merge into `tmp/schema_definition.json`.
-  3. **Extract Triples**: For each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from collected evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
-  4. **Collect Evidence**: Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration. Save evidence to `data/evidence/` as JSONL files.
-  5. **Refine Schema**: Refine the partial schema based on the evidence and extracted triples just collected. Perform cross-iteration consistency checks (deduplication, conflict resolution). Add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
-  6. **Assess Coverage**: Evaluate whether the current iteration produced new entity types or relationship types. If not, or if search results are outside the domain scope, terminate the loop.
-  7. **Continue/Stop**: If new types were found, start the next iteration (go to step 1). Otherwise, proceed to Step 3.
+  1. **Bilingual Search**: For each sub-topic, the agent generates BOTH a Chinese and an English query. Use `bilingual_search()` (on the news adapter) instead of `search_news()` so retrieval is not limited by the search language. Merge and deduplicate results by URL.
+  2. **Translate**: Translate all bilingual search results to the working language (default `zh-CN`) via `translate_content()` / `TranslationClient` before proceeding to Schema/entity exploration. Each translated item carries `original_language`.
+  3. **Create Schema**: Based on the **translated** search results, define partial entity types and relationship types (let the schema emerge from the data). Merge into `tmp/schema_definition.json`.
+  4. **Extract Triples**: For each entity/triple sub-graph discovered during exploration, use the Paseo MCP `spawn_agent` tool to dispatch sub-agents for parallel exploration. Extract (entity, relation, entity) triples from the **translated** collected evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate each triple's relation type against the Schema-to-Schema relationships; flag triples needing schema extension. Save triples to `tmp/extracted_triples.md`. Use the `triple_extraction` skill for this sub-step.
+  5. **Collect Evidence**: Spawn weak sub-agents (collector_provider) to search for news/articles about the entities from this iteration (using `bilingual_search()` + `translate_content()`). Save evidence to `data/evidence/` as JSONL files.
+  6. **Refine Schema**: Refine the partial schema based on the evidence and extracted triples just collected. Perform cross-iteration consistency checks (deduplication, conflict resolution). Add missing schema relations flagged by triple extraction as `schema_extension_needed` so Schema, Schema-relation, entity, and entity-relation layers stay aligned.
+  7. **Assess Coverage**: Evaluate whether the current iteration produced new entity types or relationship types. If not, or if search results are outside the domain scope, terminate the loop.
+  8. **Continue/Stop**: If new types were found, start the next iteration (go to step 1). Otherwise, proceed to Step 3.
 - Skills used in the loop:
-  - `schema_creation/SKILL.md` — iterative research-driven schema generation
+  - `schema_creation/SKILL.md` — iterative, exploration-first, bilingual research-driven schema generation
   - `triple_extraction/SKILL.md` — per-iteration triple extraction (part of Step 2, not a separate step)
-  - `entity_collection/SKILL.md` — per-iteration evidence collection (integrated with extraction)
+  - `entity_collection/SKILL.md` — per-iteration bilingual evidence collection (integrated with extraction)
   - `schema_refinement/SKILL.md` — per-iteration refinement and cross-iteration consistency
 
 ### Step 3: Graph Persistence

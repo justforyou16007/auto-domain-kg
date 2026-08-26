@@ -16,14 +16,16 @@ You are an **Information Collector** (weak agent). Your task is to search for ne
 
 1. **Receive partial schema** from the current iteration (concept-level entity types and business relationship types just created).
 2. **Receive entity list** from the main agent (concrete instances to search for, scoped to the current iteration).
-3. **For each entity**, search for news using the `news_adapter` module:
+3. **For each entity**, search for news using the `news_adapter` module — **use `bilingual_search()` instead of `search_news()`** (Issue #25):
    - Use the `GoogleSearchNewsAdapter` or other configured adapter.
-   - Search for entity name + relevant context.
-   - Collect at least 3-5 news items per entity.
-   - If insufficient results, try alternative queries.
+   - The agent generates **both a Chinese and an English query** for each entity/sub-topic so retrieval is not limited by the search language.
+   - `bilingual_search()` issues searches for both language queries, merges the results, and **deduplicates by URL**.
+   - After the bilingual search, **translate all results to the working language** (default `zh-CN`) via `translate_content()` / `TranslationClient` before evidence extraction. Each translated `NewsItem` carries `original_language`.
+   - Collect at least 3-5 news items per entity (across both languages).
+   - If insufficient results, try alternative queries in both languages.
 
 4. **Multi-source collection** — Each entity must be collected from 2-3 independent sources:
-   - Sources must be diverse (different publishers, different perspectives).
+   - Sources must be diverse (different publishers, different perspectives, and different original languages after translation).
    - Sources should corroborate each other on key facts.
    - If only a single source is available, mark the entity as "needs additional sources".
    - Record the `source_url` for each source to enable cross-validation.
@@ -50,7 +52,9 @@ You are an **Information Collector** (weak agent). Your task is to search for ne
 - Evidence collected now will be used later for schema refinement, triple extraction, and provenance (source_url / source_text).
 
 ### News Search Tips
-- Use different query formulations for better coverage
+- Use `bilingual_search()` (zh + en queries) for better coverage — retrieval must not be limited by the search language
+- Translate all results to the working language via `translate_content()` before extracting evidence
+- Use different query formulations in both languages for better coverage
 - Filter by language and date range as appropriate
 - For entities with common names, add domain-specific qualifiers
 - Check multiple sources for cross-referencing

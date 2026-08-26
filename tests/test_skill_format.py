@@ -37,11 +37,11 @@ EXPECTED_SKILL_DIRS = [
 EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     "socratic_inquiry": {
         "name": "socratic-inquiry",
-        "description": "Step 1 of KG construction. Ask structured Socratic questions to extract user concerns, domain scope, entity types, relationships, risk concerns, and update frequency. Save results to CLAUDE.md.",
+        "description": "Step 1 of KG construction. Ask a small number of Socratic questions to capture the user's domain, primary task, approximate entity/relationship types, and risk concerns. The user does NOT need to provide a detailed Schema — Schema is discovered through exploration in Step 2, not fixed at setup time. Save results to CLAUDE.md.",
     },
     "schema_creation": {
         "name": "schema-creation",
-        "description": "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Iterative discovery loop: search → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again.",
+        "description": "Step 2 of KG construction (iterative). Research domain topics and create Schema-level concept ontology through an exploration-first discovery process. Schema only models concept-level types (e.g. 'Storage Device', 'Vehicle', 'Supplier') — never concrete instance names. Schema relationships must have explicit business semantics. Bilingual (zh+en) queries are searched and results translated before schema/entity exploration. Iterative discovery loop: bilingual search → translate → create schema → extract entities → GraphRAG merge → persist → discover gaps → query again.",
     },
     "entity_collection": {
         "name": "entity-collection",
