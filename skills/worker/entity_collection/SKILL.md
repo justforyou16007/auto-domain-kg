@@ -16,7 +16,7 @@ You are an **Information Collector** (weak agent). Your task is to search for ne
 
 1. **Receive partial schema** from the current iteration (concept-level entity types and business relationship types just created).
 2. **Receive entity list** from the main agent (concrete instances to search for, scoped to the current iteration).
-3. **For each entity**, search for news using the `news_adapter` module — **use `bilingual_search()` instead of `search_news()`** (Issue #25):
+3. **For each entity**, search for news using the `news_adapter` module — **use `bilingual_search()` instead of `search_news()`**:
    - Use the `GoogleSearchNewsAdapter` or other configured adapter.
    - The agent generates **both a Chinese and an English query** for each entity/sub-topic so retrieval is not limited by the search language.
    - `bilingual_search()` issues searches for both language queries, merges the results, and **deduplicates by URL**.
