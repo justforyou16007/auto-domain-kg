@@ -56,6 +56,35 @@ else
     log_ok "Paseo found: $PASEO_BIN ($($PASEO_BIN --version 2>/dev/null || echo 'unknown version'))"
 fi
 
+# ─── 1b. Start Paseo daemon ────────────────────────────────────────────────────
+if [ -n "$PASEO_BIN" ]; then
+    log_info "Checking Paseo daemon status..."
+    PASEO_DAEMON_RUNNING=false
+    # Check if daemon is already running
+    if "$PASEO_BIN" daemon status 2>/dev/null | grep -qi "running"; then
+        PASEO_DAEMON_RUNNING=true
+        log_ok "Paseo daemon is already running."
+    else
+        log_info "Starting Paseo daemon..."
+        "$PASEO_BIN" daemon start 2>/dev/null &
+        PASEO_DAEMON_PID=$!
+        # Wait for daemon to be ready (poll status, up to 10 seconds)
+        for i in $(seq 1 10); do
+            sleep 1
+            if "$PASEO_BIN" daemon status 2>/dev/null | grep -qi "running"; then
+                PASEO_DAEMON_RUNNING=true
+                break
+            fi
+        done
+        if [ "$PASEO_DAEMON_RUNNING" = true ]; then
+            log_ok "Paseo daemon started successfully."
+        else
+            log_warn "Failed to start Paseo daemon automatically."
+            log_info "  You can start it manually: paseo daemon start"
+        fi
+    fi
+fi
+
 # ─── 2. Check Claude Code CLI ──────────────────────────────────────────────────
 log_info "Checking Claude Code CLI..."
 if command -v claude &>/dev/null; then
@@ -156,7 +185,7 @@ if [ ! -f "pyproject.toml" ]; then
 
     # Add dependencies
     log_info "Adding Python dependencies..."
-    uv add "neo4j>=5.0.0" "httpx>=0.27.0" 2>&1 | tail -1
+    uv add "neo4j>=5.0.0" "httpx>=0.27.0" "pyyaml>=6.0" 2>&1 | tail -1
     uv add --dev "pytest>=8.0.0" "pytest-asyncio>=0.24.0" "pytest-mock>=3.14.0" 2>&1 | tail -1
     
     log_ok "Python dependencies installed."
@@ -233,5 +262,8 @@ echo "     cd $PROJECT_DIR && uv run pytest"
 echo ""
 echo "  5. Start the Claude Code session:"
 echo "     cd $PROJECT_DIR && claude --mcp"
+echo ""
+echo "  Note: If MCP connection to Paseo fails, start the daemon manually:"
+echo "     paseo daemon start"
 echo ""
 echo "=============================================="

@@ -194,6 +194,9 @@ class GraphOps:
         """Search for entities by text similarity using vector search.
 
         Embeds the query text and performs vector similarity search.
+        When embeddings are unavailable (endpoint not configured or returns
+        empty), falls back to BM25 full-text search so the graph remains
+        queryable.
 
         Args:
             query_text: Text to search for.
@@ -204,13 +207,18 @@ class GraphOps:
         """
         query_vector = await self._embedding.embed(query_text)
         if not query_vector:
-            return []
+            # Embedding unavailable — degrade to BM25 keyword search
+            return await self._neo4j.bm25_search(query_text, top_k=top_k)
 
-        return await self._neo4j.vector_search(
+        results = await self._neo4j.vector_search(
             index_name=self._vector_index_name,
             query_vector=query_vector,
             top_k=top_k,
         )
+        if not results:
+            # Vector search returned nothing — also degrade to BM25
+            return await self._neo4j.bm25_search(query_text, top_k=top_k)
+        return results
 
     async def multi_hop_subgraph(
         self,
@@ -428,3 +436,154 @@ class GraphOps:
             entity_id=entity_id, schema_id=parent_schema_id
         )
         return new_link_id
+
+    # ---- Schema-Relation Alignment (Issue #17) ----
+
+    @staticmethod
+    def get_missing_schema_relations(
+        triples: list[dict[str, Any]],
+        schema_definition: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Find relation types present in triples but missing from schema.
+
+        For each triple, checks whether the relation type between the
+        subject's schema type and the object's schema type is defined in
+        the schema definition. Triples whose relation type has no matching
+        schema relationship are returned as "schema extension needed".
+
+        The schema_definition is expected to have a ``relationships`` key
+        containing a list of relationship definitions, each with at least
+        ``source_type``, ``target_type``, and ``relation_type`` keys. Triples
+        are dicts with ``subject_type``, ``relation``, and ``object_type``
+        keys (``subject_type``/``object_type`` map to schema entity type names).
+
+        Args:
+            triples: List of extracted triple dicts.
+            schema_definition: Schema definition dict with entity_types and
+                relationships.
+
+        Returns:
+            List of triple dicts that need a schema relation extension.
+        """
+        schema_rels: list[dict[str, Any]] = (
+            schema_definition.get("relationships", [])
+            if isinstance(schema_definition, dict)
+            else []
+        )
+        # Build a set of (source_type, relation_type, target_type) tuples
+        # for fast lookup (case-insensitive).
+        defined: set[tuple[str, str, str]] = set()
+        for rel in schema_rels:
+            src = str(rel.get("source_type", rel.get("from_type", ""))).strip().lower()
+            tgt = str(rel.get("target_type", rel.get("to_type", ""))).strip().lower()
+            rtype = str(rel.get("relation_type", rel.get("type", ""))).strip().lower()
+            if rtype:
+                defined.add((src, rtype, tgt))
+                # Also store a relaxed (source, relation, *) match for any target
+        # Build a per (source, relation) set of allowed targets and a
+        # per relation set of allowed (source, target) pairs.
+        rel_pairs: set[tuple[str, str]] = set()
+        rel_types_only: set[str] = set()
+        for (src, rtype, tgt) in defined:
+            rel_pairs.add((src, rtype))
+            rel_types_only.add(rtype)
+
+        missing: list[dict[str, Any]] = []
+        for triple in triples:
+            subj = str(triple.get("subject_type", "")).strip().lower()
+            obj = str(triple.get("object_type", "")).strip().lower()
+            rel = str(triple.get("relation", triple.get("relation_type", ""))).strip().lower()
+            if not rel:
+                continue
+            # A triple is "missing" if the (subject_type, relation_type)
+            # pair is not defined in the schema — meaning the schema has no
+            # relationship of this type originating from the subject type.
+            if (subj, rel) not in rel_pairs:
+                entry = dict(triple)
+                entry["schema_extension_needed"] = True
+                entry["reason"] = (
+                    f"Schema has no relationship type '{rel}' "
+                    f"originating from entity type '{subj}'"
+                )
+                missing.append(entry)
+        return missing
+
+    @staticmethod
+    def validate_relation_alignment(
+        schema_definition: dict[str, Any],
+        triples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Validate that each triple's relation type is defined in the schema.
+
+        Checks every triple to see if its relation type has a corresponding
+        schema-level relationship definition between the subject and object
+        schema types. Returns a report of aligned triples, misaligned triples
+        (relation exists but between different types), and triples that need
+        a schema extension.
+
+        Args:
+            schema_definition: Schema definition dict.
+            triples: List of extracted triple dicts.
+
+        Returns:
+            Dict with keys:
+              - ``total_triples``: total number of triples checked
+              - ``aligned``: triples whose relation matches the schema
+              - ``misaligned``: triples whose relation type exists in the
+                schema but with different source/target types
+              - ``missing_schema_relations``: triples that need schema extension
+              - ``is_aligned``: True if all triples are aligned
+        """
+        schema_rels: list[dict[str, Any]] = (
+            schema_definition.get("relationships", [])
+            if isinstance(schema_definition, dict)
+            else []
+        )
+        # Map (source_type_lower, target_type_lower) -> set of relation_type_lower
+        pair_to_rels: dict[tuple[str, str], set[str]] = {}
+        rel_type_to_pairs: dict[str, list[tuple[str, str]]] = {}
+        for rel in schema_rels:
+            src = str(rel.get("source_type", rel.get("from_type", ""))).strip().lower()
+            tgt = str(rel.get("target_type", rel.get("to_type", ""))).strip().lower()
+            rtype = str(rel.get("relation_type", rel.get("type", ""))).strip().lower()
+            if not rtype:
+                continue
+            pair_to_rels.setdefault((src, tgt), set()).add(rtype)
+            rel_type_to_pairs.setdefault(rtype, []).append((src, tgt))
+
+        aligned: list[dict[str, Any]] = []
+        misaligned: list[dict[str, Any]] = []
+        missing: list[dict[str, Any]] = []
+
+        for triple in triples:
+            subj = str(triple.get("subject_type", "")).strip().lower()
+            obj = str(triple.get("object_type", "")).strip().lower()
+            rel = str(triple.get("relation", triple.get("relation_type", ""))).strip().lower()
+            if not rel:
+                continue
+            pair_rels = pair_to_rels.get((subj, obj), set())
+            if rel in pair_rels:
+                # Exact match: schema defines this relation between these types
+                aligned.append(triple)
+            elif rel in rel_type_to_pairs:
+                # Relation type exists but between different entity types
+                entry = dict(triple)
+                entry["schema_misaligned"] = True
+                entry["defined_pairs"] = rel_type_to_pairs[rel]
+                misaligned.append(entry)
+            else:
+                # Relation type not defined anywhere in schema
+                entry = dict(triple)
+                entry["schema_extension_needed"] = True
+                entry["reason"] = (
+                    f"Schema has no relationship type '{rel}' defined"
+                )
+                missing.append(entry)
+
+        return {
+            "total_triples": len(triples),
+            "aligned": aligned,
+            "misaligned": misaligned,
+            "missing_schema_relations": missing,
+            "is_aligned": len(misaligned) == 0 and len(missing) == 0,
+        }

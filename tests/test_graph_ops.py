@@ -337,3 +337,110 @@ async def test_setup_vector_index(graph_ops, mock_neo4j):
         property_name="embedding",
         dimensions=768,
     )
+
+
+# ---- Issue #17: Schema-relation alignment ----
+
+
+def test_get_missing_schema_relations(graph_ops):
+    """Test finding triples whose relations are missing from the schema."""
+    schema_def = {
+        "entity_types": [
+            {"name": "Supplier"},
+            {"name": "Material"},
+        ],
+        "relationships": [
+            {"source_type": "Supplier", "relation_type": "SUPPLIES", "target_type": "Material"},
+        ],
+    }
+    triples = [
+        {"subject_type": "Supplier", "relation": "SUPPLIES", "object_type": "Material"},
+        {"subject_type": "Supplier", "relation": "MANUFACTURES", "object_type": "Product"},
+    ]
+    missing = graph_ops.get_missing_schema_relations(triples, schema_def)
+    assert len(missing) == 1
+    assert missing[0]["relation"] == "MANUFACTURES"
+    assert missing[0]["schema_extension_needed"] is True
+
+
+def test_get_missing_schema_relations_all_aligned(graph_ops):
+    """Test that aligned triples return no missing."""
+    schema_def = {
+        "relationships": [
+            {"source_type": "Supplier", "relation_type": "SUPPLIES", "target_type": "Material"},
+            {"source_type": "Supplier", "relation_type": "MANUFACTURES", "target_type": "Product"},
+        ],
+    }
+    triples = [
+        {"subject_type": "Supplier", "relation": "SUPPLIES", "object_type": "Material"},
+        {"subject_type": "Supplier", "relation": "MANUFACTURES", "object_type": "Product"},
+    ]
+    missing = graph_ops.get_missing_schema_relations(triples, schema_def)
+    assert len(missing) == 0
+
+
+def test_validate_relation_alignment(graph_ops):
+    """Test full relation alignment validation."""
+    schema_def = {
+        "relationships": [
+            {"source_type": "Supplier", "relation_type": "SUPPLIES", "target_type": "Material"},
+            {"source_type": "Supplier", "relation_type": "PART_OF", "target_type": "Organization"},
+        ],
+    }
+    triples = [
+        {"subject_type": "Supplier", "relation": "SUPPLIES", "object_type": "Material"},
+        {"subject_type": "Supplier", "relation": "PART_OF", "object_type": "Organization"},
+        {"subject_type": "Supplier", "relation": "MANUFACTURES", "object_type": "Product"},
+        {"subject_type": "Supplier", "relation": "SUPPLIES", "object_type": "Product"},
+    ]
+    result = graph_ops.validate_relation_alignment(schema_def, triples)
+    assert result["total_triples"] == 4
+    assert len(result["aligned"]) == 2
+    assert len(result["missing_schema_relations"]) == 1
+    assert len(result["misaligned"]) == 1
+    assert result["is_aligned"] is False
+
+
+def test_validate_relation_alignment_all_aligned(graph_ops):
+    """Test validation when all triples are aligned."""
+    schema_def = {
+        "relationships": [
+            {"source_type": "Supplier", "relation_type": "SUPPLIES", "target_type": "Material"},
+        ],
+    }
+    triples = [
+        {"subject_type": "Supplier", "relation": "SUPPLIES", "object_type": "Material"},
+    ]
+    result = graph_ops.validate_relation_alignment(schema_def, triples)
+    assert result["is_aligned"] is True
+    assert len(result["aligned"]) == 1
+
+
+# ---- Issue #18: vector_search BM25 fallback ----
+
+
+@pytest.mark.asyncio
+async def test_vector_search_falls_back_to_bm25(graph_ops, mock_neo4j, mock_embedding):
+    """Test vector_search degrades to BM25 when embedding returns empty."""
+    mock_embedding.embed = AsyncMock(return_value=[])
+    mock_neo4j.bm25_search = AsyncMock(
+        return_value=[{"node": {"name": "Fallback Corp"}, "score": 0.8}]
+    )
+    results = await graph_ops.vector_search(query_text="test query", top_k=5)
+    assert len(results) == 1
+    assert results[0]["node"]["name"] == "Fallback Corp"
+    mock_neo4j.bm25_search.assert_called_once_with("test query", top_k=5)
+
+
+@pytest.mark.asyncio
+async def test_vector_search_falls_back_when_neo4j_empty(graph_ops, mock_neo4j, mock_embedding):
+    """Test vector_search degrades to BM25 when neo4j returns empty."""
+    # Embedding returns a vector, but neo4j vector_search returns []
+    mock_neo4j.vector_search = AsyncMock(return_value=[])
+    mock_neo4j.bm25_search = AsyncMock(
+        return_value=[{"node": {"name": "BM25 Corp"}}]
+    )
+    results = await graph_ops.vector_search(query_text="test", top_k=3)
+    assert len(results) == 1
+    assert results[0]["node"]["name"] == "BM25 Corp"
+    mock_neo4j.bm25_search.assert_called_once_with("test", top_k=3)

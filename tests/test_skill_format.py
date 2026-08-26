@@ -53,11 +53,11 @@ EXPECTED_SKILL_METADATA: dict[str, dict[str, str]] = {
     },
     "triple_extraction": {
         "name": "triple-extraction",
-        "description": "Step 3c: Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
+        "description": "Part of Step 2 iterative loop. Extract entity-relation triples (subject, predicate, object) from collected news evidence, guided by the Schema layer. Only extract concrete Instance entities (never concepts). Validate Instance relationships against Schema-to-Schema relationships. Each entity records source_url and source_text. Cross-validate triples across multiple sources: flag single-source triples as low-confidence, flag conflicting triples for human review, require 3+ sources for critical facts. Save entities and relationships to markdown, save evidence slices with provenance to data/evidence/.",
     },
     "graph_persistence": {
         "name": "graph-persistence",
-        "description": "Step 4 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability.",
+        "description": "Step 3 of KG construction. Persist Schema concept ontology + Instance entities to Neo4j. Schema nodes contain only concept-level info. Entity nodes carry source_url and source_text for provenance. Validate Instance relationships against Schema before persisting. Perform semantic merging and discover completeness gaps. Link entity nodes to their schema nodes. Store evidence slices and source URLs on nodes for traceability.",
     },
     "schema_audit": {
         "name": "schema-audit",

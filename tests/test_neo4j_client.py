@@ -113,13 +113,25 @@ async def test_create_schema_node(client, mock_driver):
 
 @pytest.mark.asyncio
 async def test_create_entity_node(client, mock_driver):
-    """Test creating an entity node."""
+    """Test creating an entity node.
+
+    Regression test for Issue #22: entity creation must use ``SET e =
+    $properties`` (parameterized) and must NOT inline a ``{props}`` /
+    ``$properties`` map literal inside the ``CREATE`` clause.
+    """
     result = await client.create_entity_node(
         name="Test Corp",
         properties={"description": "A test company"},
         labels=["Entity", "Company"],
     )
     assert result == "test-id"
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    # Properties applied via parameterized SET, not a {props} literal in CREATE.
+    assert "SET e = $properties" in query
+    # No raw {props} / {properties} map literal inlined in CREATE.
+    assert "{props}" not in query
+    assert "{properties}" not in query
 
 
 @pytest.mark.asyncio
@@ -187,7 +199,12 @@ async def test_create_entity_node_without_source(client, mock_driver):
 
 @pytest.mark.asyncio
 async def test_create_relationship(client, mock_driver):
-    """Test creating a relationship."""
+    """Test creating a relationship.
+
+    Regression test for Issue #22/#20: the Cypher must NOT inline
+    ``$properties`` inside the ``CREATE`` relationship pattern (which is a
+    syntax error). Properties must be set via ``SET r = $properties``.
+    """
     result = await client.create_relationship(
         from_id="entity-1",
         to_id="entity-2",
@@ -195,6 +212,19 @@ async def test_create_relationship(client, mock_driver):
         properties={"contract_value": "$1M"},
     )
     assert result == "test-id"
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    params = call_args[0][1]
+    # Properties must be applied via SET, not inlined in the CREATE pattern.
+    assert "SET r = $properties" in query
+    # The CREATE relationship pattern must not carry an inline $properties map.
+    assert "[r:SUPPLIES $properties]" not in query
+    assert "[r:SUPPLIES $properties ]" not in query
+    # rel_type must be interpolated positionally but params passed separately.
+    assert "SUPPLIES" in query
+    assert params["from_id"] == "entity-1"
+    assert params["to_id"] == "entity-2"
+    assert params["properties"] == {"contract_value": "$1M"}
 
 
 @pytest.mark.asyncio
@@ -360,3 +390,79 @@ async def test_not_connected_raises_error():
         # Don't connect, should raise
         with pytest.raises(RuntimeError, match="not connected"):
             await c._run_query("RETURN 1")
+
+
+# ---- Issue #18: keyword_search and bm25_search ----
+
+
+@pytest.mark.asyncio
+async def test_keyword_search(client, mock_driver):
+    """Test keyword search returns nodes matching the query."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"node": {"name": "Test Corp"}}]
+    )
+    results = await client.keyword_search(query="Test", top_k=5)
+    assert len(results) == 1
+    assert results[0]["node"]["name"] == "Test Corp"
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    # Query should use CONTAINS and UNION
+    assert "CONTAINS" in query
+    assert "UNION" in query
+    params = call_args[0][1]
+    assert params["query"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_with_labels(client, mock_driver):
+    """Test keyword search with specific labels."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"node": {"name": "Test Corp"}}]
+    )
+    results = await client.keyword_search(
+        query="Test", labels=["Entity"], top_k=3
+    )
+    assert len(results) == 1
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    assert "Entity" in query
+    assert "Schema" not in query  # only Entity label requested
+
+
+@pytest.mark.asyncio
+async def test_bm25_search_uses_fulltext(client, mock_driver):
+    """Test bm25_search tries full-text index first."""
+    mock_driver.session.return_value.run.reset_mock()
+    mock_driver.session.return_value.run.return_value.data = AsyncMock(
+        return_value=[{"node": {"name": "Test Corp"}, "score": 1.5}]
+    )
+    results = await client.bm25_search(query_text="Test", top_k=5)
+    assert len(results) == 1
+    assert results[0]["score"] == 1.5
+    call_args = mock_driver.session.return_value.run.call_args
+    query = call_args[0][0]
+    assert "db.index.fulltext.queryNodes" in query
+    params = call_args[0][1]
+    assert params["query_text"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_bm25_search_falls_back_to_keyword(client, mock_driver):
+    """Test bm25_search falls back to keyword search when full-text fails."""
+    mock_driver.session.return_value.run.reset_mock()
+    # First call (fulltext) raises, second call (keyword) returns results
+    call_count = 0
+
+    async def mock_data():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("full-text index not found")
+        return [{"node": {"name": "Fallback Corp"}}]
+
+    mock_driver.session.return_value.run.return_value.data = mock_data
+    results = await client.bm25_search(query_text="Test", top_k=5)
+    assert len(results) == 1
+    assert results[0]["node"]["name"] == "Fallback Corp"

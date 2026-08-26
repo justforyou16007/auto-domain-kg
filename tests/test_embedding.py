@@ -147,3 +147,33 @@ async def test_config_defaults():
         assert config.model == "BAAI/bge-m3"
         assert config.dimensions == 768
         assert config.api_key == ""
+
+
+# ---- Issue #18: is_available() ----
+
+
+def test_is_available_true_with_endpoint():
+    """Test is_available returns True when endpoint is configured."""
+    with patch("auto_domain_kg.embedding.Path.mkdir"):
+        with patch("auto_domain_kg.embedding.Path.exists", return_value=False):
+            config = EmbeddingConfig(endpoint="http://test:8000/v1/embeddings")
+            c = EmbeddingClient(config)
+            assert c.is_available() is True
+
+
+def test_is_available_false_without_endpoint():
+    """Test is_available returns False when endpoint is empty."""
+    with patch("auto_domain_kg.embedding.Path.mkdir"):
+        with patch("auto_domain_kg.embedding.Path.exists", return_value=False):
+            config = EmbeddingConfig(endpoint="")
+            c = EmbeddingClient(config)
+            assert c.is_available() is False
+
+
+def test_is_available_false_with_none_endpoint():
+    """Test is_available returns False when endpoint is None-like."""
+    with patch("auto_domain_kg.embedding.Path.mkdir"):
+        with patch("auto_domain_kg.embedding.Path.exists", return_value=False):
+            config = EmbeddingConfig(endpoint="   ")
+            c = EmbeddingClient(config)
+            assert c.is_available() is False
